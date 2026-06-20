@@ -57,10 +57,19 @@ CRM-Classification-Pipeline/
 
 ## 🚀 Cài Đặt & Chạy Môi Trường Phát Triển (Local Setup)
 
-### 1. Cài đặt thư viện
-Yêu cầu Python 3.11+. Tạo môi trường ảo và cài đặt dependencies:
+> [!IMPORTANT]
+> **Bảo mật dữ liệu (Data Confidentiality):**
+> File dữ liệu gốc chứa thông tin khách hàng nhạy cảm đã được lược bỏ khỏi repository công khai. 
+> Vui lòng chạy lệnh sinh dữ liệu giả lập (`make sample`) để tạo file kiểm thử nhanh tại `sample_data/CRM_merge_sample.xlsx` trước khi chạy pipeline.
+
+### 1. Cài đặt thư viện & Dữ liệu mẫu
+Dự án hỗ trợ `Makefile` để đơn giản hóa các thao tác:
 ```bash
-pip install -r requirements.txt
+# Cài đặt thư viện
+make setup
+
+# Tạo dữ liệu giả lập kiểm thử nhanh
+make sample
 ```
 
 ### 2. Thiết lập cấu hình biến môi trường
@@ -73,13 +82,14 @@ cp .env.example .env
 * Dùng Vertex AI: Đặt `USE_VERTEX=True` và lưu file key dịch vụ GCP của bạn tại `./sa-key.json`.
 
 ### 3. Chạy Pipeline kiểm thử từng bước
+Bạn có thể sử dụng các lệnh shortcut qua `Makefile`:
 ```bash
-# Chạy toàn bộ 4 bước
-python src/run_pipeline.py
+# Chạy toàn bộ pipeline (Regex + LLM)
+make run
 
-# Chạy một hoặc nhiều bước cụ thể
-python src/run_pipeline.py 1      # Chạy Regex
-python src/run_pipeline.py 3 4    # Chỉ chạy LLM và Merge gộp kết quả
+# Hoặc chạy thủ công từng bước cụ thể bằng script
+python src/run_pipeline.py 1      # Chỉ chạy phân loại Regex
+python src/run_pipeline.py 3 4    # Chỉ chạy gọi LLM và gộp kết quả vào Excel
 ```
 
 ---
