@@ -16,4 +16,4 @@ COPY . ./
 # Set the default timezone
 ENV TZ=Asia/Ho_Chi_Minh
 
-ENTRYPOINT ["python", "src/main.py"]
+ENTRYPOINT ["python", "src/pipeline.py"]

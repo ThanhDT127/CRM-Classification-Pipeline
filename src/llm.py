@@ -111,3 +111,55 @@ def call_llm_batch(
 # Helper to import Path and os inside file since they are used in init_llm_client
 from pathlib import Path
 import os
+import re
+
+# Date normalization regex patterns
+_DATE_DMY = re.compile(r'(?<!\d)(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?(?!\d)')
+_DATE_YMD = re.compile(r'(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)')
+_MONTH_YEAR = re.compile(r'(?<!\d)(\d{1,2})[/-](\d{4}|\d{2})(?!\d)')
+_THANG = re.compile(r'(?:tháng|thang)\s*(\d{1,2})', re.IGNORECASE)
+
+def _norm_ddmmyy(s: str) -> Optional[str]:
+    """Normalize date string to dd/mm/yy format."""
+    if s is None:
+        return None
+    raw = str(s).strip()
+    if not raw:
+        return None
+
+    t = raw.strip()
+
+    m = _DATE_YMD.search(t)
+    if m:
+        yy = int(m.group(1)) % 100
+        mm = int(m.group(2))
+        dd = int(m.group(3))
+        if 1 <= mm <= 12 and 1 <= dd <= 31:
+            return f'{dd:02d}/{mm:02d}/{yy:02d}'
+
+    m = _DATE_DMY.search(t)
+    if m:
+        dd = int(m.group(1))
+        mm = int(m.group(2))
+        yy_raw = m.group(3)
+        if yy_raw is None:
+            yy = 26
+        else:
+            yy = int(yy_raw) % 100
+        if 1 <= mm <= 12 and 1 <= dd <= 31:
+            return f'{dd:02d}/{mm:02d}/{yy:02d}'
+
+    m = _MONTH_YEAR.search(t)
+    if m:
+        mm = int(m.group(1))
+        yy = int(m.group(2)) % 100
+        if 1 <= mm <= 12:
+            return f'01/{mm:02d}/{yy:02d}'
+
+    m = _THANG.search(t)
+    if m:
+        mm = int(m.group(1))
+        if 1 <= mm <= 12:
+            return f'01/{mm:02d}/26'
+
+    return None
