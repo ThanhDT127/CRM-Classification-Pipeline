@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  crm-classifier:
+    build: .
+    container_name: crm_classifier_app
+    volumes:
+      # Mount VM SharePoint synchronized directories to Container data/output
+      - /mnt/sharepoint/Input:/app/data
+      - /mnt/sharepoint/Output:/app/output
+      # Mount Service Account GCP credentials key
+      - ./sa-key.json:/app/sa-key.json
+    environment:
+      # Toggle to True for Vertex AI, False for AI Studio (API Key)
+      - USE_VERTEX=True
+      - VERTEX_PROJECT=omega-dahlia-475002-r7
+      - VERTEX_LOCATION=us-central1
+      - GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
+      - GEMINI_MODEL=gemini-2.5-flash
+      - TZ=Asia/Ho_Chi_Minh
+    restart: "no"

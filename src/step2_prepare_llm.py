@@ -97,13 +97,8 @@ def main():
         if not missing_cols:
             continue
 
-        # Build allowed map: only for missing_cols
-        allowed: Dict[str, List[str]] = {}
-        for col in missing_cols:
-            if col in canonical_by_col:
-                allowed[col] = canonical_by_col[col]
-
-        # Build item in v5 format
+        # Build item (no 'allowed' — prompt already defines valid tags,
+        # and _canonicalize_label() in step3 validates LLM output)
         item: Dict[str, Any] = {
             "row_idx": row_idx,
             "texts": {},
@@ -118,7 +113,6 @@ def main():
         if locked_labels:
             item["existing"] = locked_labels
         item["missing_cols"] = missing_cols
-        item["allowed"] = allowed
 
         items.append(item)
 

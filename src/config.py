@@ -19,7 +19,7 @@ except ImportError:
 
 # ─── Paths ──────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent   # D:\Works\CRM
-PATH_INPUT       = PROJECT_ROOT / "data"     / "CRM_TDCTDA.xlsx"
+PATH_INPUT       = PROJECT_ROOT / "data"     / (os.getenv("CRM_INPUT_FILE") or "CRM_merge.xlsx")
 PATH_KW_JSON     = PROJECT_ROOT / "keywords" / "keywords_fixed.json"
 PATH_PROMPT      = PROJECT_ROOT / "prompts"  / "prompt_CRM_v5.txt"
 PATH_OUTPUT_REGEX = PROJECT_ROOT / "output"  / "CRM_classified.xlsx"
@@ -30,10 +30,10 @@ CKPT_JSON         = PROJECT_ROOT / "output"  / "llm_fills_checkpoint.json"
 
 # ─── Gemini API settings ────────────────────────────────────────────────────
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GOOGLE_GENERATIVEAI_API_KEY") or ""
-MODEL_NAME = os.getenv("GEMINI_MODEL") or "models/gemini-2.0-flash"
-MIN_INTERVAL_S = float(os.getenv("GEMINI_MIN_INTERVAL_S") or "2.5")
+MODEL_NAME = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+MIN_INTERVAL_S = float(os.getenv("GEMINI_MIN_INTERVAL_S") or "3.5")
 JITTER_S       = float(os.getenv("GEMINI_JITTER_S") or "0.5")
-BATCH_SIZE     = int(os.getenv("GEMINI_BATCH_SIZE") or "20")
+BATCH_SIZE     = int(os.getenv("GEMINI_BATCH_SIZE") or "40")
 MIN_BATCH      = 2
 
 # ─── Column naming convention ───────────────────────────────────────────────
@@ -69,6 +69,7 @@ COL_DATE_PLAN      = col_name("Kế Hoạch", "Ngày làm việc/ giao hàng:")
 COL_PROPOSAL       = col_name("Kế Hoạch", "Đề xuất")
 COL_COMP_WORK      = col_name("Đối Thủ Cạnh Tranh", "Nội dung làm việc")
 COL_COMP_SUBJECT   = col_name("Đối Thủ Cạnh Tranh", "Đối tượng")
+COL_ADVANTAGE      = col_name("Đối Thủ Cạnh Tranh", "Lợi thế")
 COL_BRANDS         = col_name("Đối Thủ Cạnh Tranh", "Các Hãng đối thủ cạnh tranh")
 
 OUTPUT_COLUMNS = [
@@ -85,6 +86,7 @@ OUTPUT_COLUMNS = [
     COL_PROPOSAL,
     COL_COMP_WORK,
     COL_COMP_SUBJECT,
+    COL_ADVANTAGE,
     COL_BRANDS,
 ]
 
@@ -130,7 +132,7 @@ def build_keyword_index(
         for minor, subs in minors.items():
             # Special case: competitor brands
             if major == "Đối Thủ Cạnh Tranh" and minor == "Cạnh Tranh" and isinstance(subs, dict):
-                brand_list = subs.get("Các Hãng đối thủ cạnh tranh")
+                brand_list = subs.get("Các Hãng cụ thể") or subs.get("Các Hãng đối thủ cạnh tranh")
                 if isinstance(brand_list, list):
                     for b in brand_list:
                         for term in _split_terms(b):
