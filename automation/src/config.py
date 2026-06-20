@@ -26,6 +26,24 @@ MIN_INTERVAL_S = float(os.getenv("GEMINI_MIN_INTERVAL_S") or "3.5")
 JITTER_S = float(os.getenv("GEMINI_JITTER_S") or "0.5")
 BATCH_SIZE = int(os.getenv("GEMINI_BATCH_SIZE") or "40")
 
+# Azure AD Configuration
+AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID") or ""
+AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID") or ""
+AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET") or ""
+
+# SharePoint Configuration
+SHAREPOINT_DRIVE_ID = os.getenv("SHAREPOINT_DRIVE_ID") or ""
+SHAREPOINT_ROOT_FOLDER_ID = os.getenv("SHAREPOINT_ROOT_FOLDER_ID") or ""
+SHAREPOINT_FILE_PATH = os.getenv("SHAREPOINT_FILE_PATH") or "CRM_merge/CRM_merge.xlsx" # e.g. folder/file.xlsx
+
+# Email Notification Configuration
+NOTIFICATION_SENDER_EMAIL = os.getenv("NOTIFICATION_SENDER_EMAIL") or ""
+_recipients_str = os.getenv("NOTIFICATION_RECIPIENTS") or ""
+NOTIFICATION_RECIPIENTS = [email.strip() for email in _recipients_str.split(",") if email.strip()]
+
+GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+
+
 # --- Column naming helper ---
 def col_name(major: str, minor: str) -> str:
     return f"[{major}] {minor}"
