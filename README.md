@@ -5,142 +5,177 @@
 [![Docker Support](https://img.shields.io/badge/docker-enabled-blue.svg)](https://www.docker.com)
 [![Testing](https://img.shields.io/badge/tests-pytest-green.svg)](https://docs.pytest.org)
 
-Hệ thống phân loại tự động dữ liệu phản hồi CRM quy mô lớn (>27,000 dòng) dành cho ngành thiết bị điện chiếu sáng bằng phương pháp kết hợp **Regex (Keyword Matching)** và **LLM (Gemini 2.5 Flash trên Vertex AI)**.
+Hệ thống tự động hóa tải, phân loại dữ liệu phản hồi CRM quy mô lớn (>27,000 dòng) và đồng bộ trực tiếp giữa các SharePoint Site bằng phương pháp lai kết hợp **Regex (Vietnamese Keyword Matching)** và **LLM (Gemini 2.5 Flash qua Google GenAI API)**.
 
 ---
 
-## 🌟 Tính Năng Nổi Bật (Key Features)
+## 📝 Mục lục (Table of Contents)
 
-1. **Xử lý lai (Hybrid Regex + LLM Classifier):** Lọc nhanh qua bộ từ khóa phân loại cứng bằng Regex trước để giảm tải, chỉ gửi các ô trống hoặc bị phân loại "mơ hồ" sang LLM (Gemini 2.5 Flash).
-2. **Xử lý gia tăng (Incremental Delta Load):** Tự động phát hiện các dòng dữ liệu mới được nối thêm vào file nguồn, chỉ phân loại những dòng mới để tiết kiệm tài nguyên và chi phí gọi API.
-3. **An toàn dữ liệu tuyệt đối (Zero Row-Shifting):** Gộp kết quả ngược lại file Excel thông qua ánh xạ khóa chính (`ActivityId`) thay vì chỉ mục dòng vật lý. Loại bỏ hoàn toàn nguy cơ xô lệch dữ liệu khi người dùng chèn, xóa hoặc sắp xếp lại dòng trên SharePoint.
-4. **Khả năng tự phục hồi (Crash-Safe Checkpointing):** Lưu tiến trình xử lý liên tục. Nếu gặp lỗi kết nối hoặc cạn kiệt tài nguyên (Rate Limit 429), hệ thống có thể tiếp tục từ mốc dừng cuối cùng mà không cần chạy lại từ đầu.
-5. **Kháng lỗi đa luồng & timeout:** Chạy bất đồng bộ đa luồng (`ThreadPoolExecutor`) kèm cấu hình Rate-limit thích ứng. Sửa đổi giới hạn timeout SDK lên 120 giây và lọc ký tự không ASCII để tránh crash bảng điều khiển Windows.
-6. **Định dạng bảng biểu cao cấp (Premium Excel Formatting):** Tự động áp dụng cấu trúc tiêu đề kép (Double-row Header), tô màu sắc trực quan theo từng nhóm chuyên môn (CRM, AETT, Khách hàng, Kế hoạch, Đối thủ) và tự động kéo rộng độ rộng cột (Auto-fit).
-7. **Đóng gói Docker sẵn sàng:** Tách biệt môi trường Phát triển và Triển khai tự động chạy ngầm trên Máy ảo (VM).
+1. [Giới thiệu dự án (About The Project)](#about-the-project)
+2. [Công nghệ sử dụng (Built With)](#built-with)
+3. [Cấu Trúc Thư Mục (Directory Structure)](#directory-structure)
+4. [Hướng dẫn cài đặt (Getting Started)](#getting-started)
+5. [Hướng dẫn sử dụng & Vận hành (Usage & Operations)](#usage)
+6. [Thiết kế kỹ thuật (Technical Design)](#technical-design)
+7. [Hiệu suất & Đánh giá (Performance & Metrics)](#performance-metrics)
+8. [Kiểm thử phần mềm & CI/CD (Testing & CI-CD)](#testing-cicd)
 
 ---
 
-## 📂 Cấu Trúc Thư Mục (Repository Structure)
+## <a name="about-the-project"></a>🌟 Giới thiệu dự án (About The Project)
 
-Dự án được phân tách rõ ràng thành hai phân vùng:
+Dự án này giải quyết bài toán tự động hóa phân loại phản hồi, yêu cầu khách hàng và thông tin tiến độ dự án từ dữ liệu thô CRM của ngành thiết bị điện chiếu sáng. Thay vì dán nhãn thủ công hàng chục nghìn dòng dữ liệu, hệ thống tự động:
+* **Tải dữ liệu nguồn:** Đọc file `CRM_merge.xlsx` từ SharePoint nguồn (Site `CRM-CTDA`) thông qua Microsoft Graph API.
+* **Phân loại lai thông minh (Hybrid Classifier):** Áp dụng bộ lọc Regex tiếng Việt nhanh để điền nhãn cứng, sau đó sử dụng Gemini 2.5 Flash đối với các thông tin phức tạp hoặc mơ hồ.
+* **Xử lý gia tăng (Incremental Delta):** Chỉ lọc và dán nhãn những dòng mới được thêm vào (`ActivityId` chưa tồn tại trong lịch sử) nhằm tiết kiệm tối đa chi phí API.
+* **Định dạng & Đồng bộ đích:** Định dạng bảng Excel chuẩn Premium (Double-header, Group Colors, Column Auto-fit) và đẩy đè trực tiếp kết quả lên file `CRM_classified.xlsx` tại SharePoint đích (Site `DataPBI_salein`).
+* **Báo cáo tự động:** Gửi mail báo cáo tiến trình (hoặc báo lỗi kèm stack trace) tự động qua Graph API.
+
+---
+
+## <a name="built-with"></a>🛠️ Công nghệ sử dụng (Built With)
+
+### Core Stack
+[![My Skills](https://skillicons.dev/icons?i=py,docker,git,azure,gcp,vscode)](https://skillicons.dev)
+
+### Thư viện chính
+* **Dữ liệu & Excel:** `pandas`, `openpyxl`
+* **Xử lý ngôn ngữ tự nhiên:** `google-genai` (Gemini API SDK), `unidecode` (Chuẩn hóa tiếng Việt)
+* **Kết nối & Xác thực:** `msal` (Microsoft Authentication Library), `requests`
+
+---
+
+## <a name="directory-structure"></a>📂 Cấu Trúc Thư Mục (Directory Structure)
+
+Dự án đã được tái cấu trúc sạch sẽ ở cấp thư mục gốc (Root Level) giúp việc vận hành Docker và chạy kiểm thử cực kỳ đơn giản:
 
 ```text
 CRM-Classification-Pipeline/
-├── .github/workflows/          # Cấu hình kiểm thử tự động (CI/CD GitHub Actions)
+├── .github/workflows/         # Kịch bản kiểm thử tự động CI (GitHub Actions)
 │   └── ci.yml
-├── automation/                  # MÔI TRƯỜNG TRIỂN KHAI TỰ ĐỘNG (DOCKER / VM / PRODUCTION)
-│   ├── config/                  # Keywords và Prompt templates tĩnh
-│   ├── src/                     # Code chính cho automation (Delta, ID matching)
-│   ├── Dockerfile
-│   ├── docker-compose.yml
-│   └── requirements.txt
-├── src/                         # MÔI TRƯỜNG PHÁT TRIỂN / R&D (DEVELOPMENT & RESEARCH)
-│   ├── config.py                # Cấu hình chung
-│   ├── step1_classify.py        # Phân loại bằng regex
-│   ├── step2_prepare_llm.py     # Chuẩn bị payload LLM
-│   ├── step3_call_llm.py        # Gọi API Gemini song song có checkpoint
-│   ├── step4_merge.py           # Gộp kết quả và định dạng Excel
-│   └── run_pipeline.py          # Script chạy test từng bước
-├── tests/                       # Thư mục kiểm thử phần mềm (Testing)
-│   └── test_pipeline.py         # Unit tests cho logic cốt lõi
-├── prompts/ / keywords/         # Cấu hình tĩnh cho môi trường phát triển
-├── notebooks/                   # File Jupyter Notebook gốc
-├── .env.example                 # File cấu hình mẫu môi trường
-├── sa-key.json.example          # File key dịch vụ GCP mẫu
-├── .gitignore
-├── requirements.txt             # Thư viện cho môi trường phát triển
-└── README.md
+├── config/                    # Cấu hình tĩnh
+│   ├── keywords_fixed.json    # Lưới từ khóa phân loại Regex tiếng Việt
+│   └── prompt_CRM_v5.txt      # Prompt hệ thống định hướng cho Gemini
+├── src/                       # MÃ NGUỒN CHÍNH (PRODUCTION)
+│   ├── config.py              # Định nghĩa đường dẫn và tên 15 cột đầu ra
+│   ├── sharepoint.py          # SharePoint Client (Tải/Lên file qua Microsoft Graph API)
+│   ├── notification.py        # Dịch vụ gửi email thông báo thành công/lỗi
+│   ├── classifier.py          # Bộ phân loại Regex tiếng Việt
+│   ├── llm.py                 # Client kết nối Gemini song song với checkpoint
+│   ├── pipeline.py            # Script chính điều phối toàn bộ Pipeline chạy tự động
+│   └── db_init.py             # Script nén/khởi tạo cơ sở dữ liệu lịch sử từ Excel
+├── tests/                     # Bộ kiểm thử tự động (Testing)
+│   ├── test_pipeline.py       # Unit tests cho logic chuẩn hóa/regex
+│   └── test_automation.py     # Integration tests (Mock SharePoint & Mail API)
+├── notebooks/                 # Nghiên cứu & R&D Jupyter Notebooks
+│   ├── CRM_Classification.ipynb
+│   └── Phan_Loai_CRM_IMPROVED.ipynb
+├── .dockerignore              # Tối ưu hóa dung lượng truyền vào Docker (chỉ ~1.20kB)
+├── Dockerfile                 # Đóng gói Python 3.11-slim
+├── docker-compose.yml         # Khởi chạy dịch vụ container
+├── requirements.txt           # Danh sách các thư viện phụ thuộc
+├── Makefile                   # Lệnh shortcut cho nhà phát triển
+├── .env.example               # Mẫu cấu hình biến môi trường
+└── README.md                  # Tài liệu hướng dẫn sử dụng
 ```
 
 ---
 
-## 🚀 Cài Đặt & Chạy Môi Trường Phát Triển (Local Setup)
+## <a name="getting-started"></a>🚀 Hướng dẫn cài đặt (Getting Started)
 
-> [!IMPORTANT]
-> **Bảo mật dữ liệu (Data Confidentiality):**
-> File dữ liệu gốc chứa thông tin khách hàng nhạy cảm đã được lược bỏ khỏi repository công khai. 
-> Vui lòng chạy lệnh sinh dữ liệu giả lập (`make sample`) để tạo file kiểm thử nhanh tại `sample_data/CRM_merge_sample.xlsx` trước khi chạy pipeline.
+### 1. Yêu cầu hệ thống
+* Python 3.11+
+* Docker & Docker Compose (nếu chạy container)
+* Tài khoản Azure AD App Registration (có quyền đọc/ghi SharePoint & gửi Mail)
+* Google Gemini API Key hoặc GCP Service Account (Vertex AI)
 
-### 1. Cài đặt thư viện & Dữ liệu mẫu
-Dự án hỗ trợ `Makefile` để đơn giản hóa các thao tác:
+### 2. Thiết lập môi trường cục bộ
+Cài đặt dependencies:
 ```bash
-# Cài đặt thư viện
-make setup
-
-# Tạo dữ liệu giả lập kiểm thử nhanh
-make sample
+pip install -r requirements.txt
 ```
 
-### 2. Thiết lập cấu hình biến môi trường
-Tạo file `.env` từ file `.env.example`:
+Sao chép cấu hình mẫu và điền đầy đủ các thông tin bí mật:
 ```bash
 cp .env.example .env
 ```
-Điền key API của bạn vào `.env`:
-* Dùng Google AI Studio: Điền `GEMINI_API_KEY=AIzaSy...`
-* Dùng Vertex AI: Đặt `USE_VERTEX=True` và lưu file key dịch vụ GCP của bạn tại `./sa-key.json`.
-
-### 3. Chạy Pipeline kiểm thử từng bước
-Bạn có thể sử dụng các lệnh shortcut qua `Makefile`:
-```bash
-# Chạy toàn bộ pipeline (Regex + LLM)
-make run
-
-# Hoặc chạy thủ công từng bước cụ thể bằng script
-python src/run_pipeline.py 1      # Chỉ chạy phân loại Regex
-python src/run_pipeline.py 3 4    # Chỉ chạy gọi LLM và gộp kết quả vào Excel
-```
+Các tham số quan trọng trong `.env`:
+* `GEMINI_API_KEY`: Khóa kết nối Gemini API.
+* `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`: Thông tin xác thực Azure AD.
+* `SHAREPOINT_SOURCE_DRIVE_ID` / `SHAREPOINT_TARGET_DRIVE_ID`: ID Drive của site nguồn và site đích tương ứng.
 
 ---
 
-## 📦 Triển Khai Chạy Tự Động Với Docker (Production / VM / SharePoint)
+## <a name="usage"></a>🎯 Hướng dẫn sử dụng & Vận hành (Usage & Operations)
 
-Thư mục `./automation` được thiết kế độc lập, đóng gói gọn nhẹ để deploy lên máy ảo chạy ngầm hằng ngày (ví dụ: 3h30 sáng).
-
-### 1. Cách thức hoạt động
-1. SharePoint hoặc OneDrive đồng bộ file Excel nguồn về máy ảo Host tại thư mục `/mnt/sharepoint/Input/CRM_merge.xlsx`.
-2. Máy ảo cài đặt **Cron Job** tự động kích hoạt container lúc 3h30 sáng hằng ngày.
-3. Container khởi chạy quét Delta dòng mới dựa theo `ActivityId`, gọi LLM, gộp kết quả an toàn, áp dụng định dạng Excel và lưu đè trực tiếp lên SharePoint.
-
-### 2. Khởi chạy bằng Docker Compose
-Di chuyển vào thư mục `automation`, điền các tham số API Key hoặc file `sa-key.json` tương ứng rồi chạy:
+### Chạy trực tiếp bằng Python
 ```bash
-cd automation
+# Khởi tạo CSDL lịch sử (nếu chạy lần đầu từ file classified cũ)
+python src/db_init.py
+
+# Chạy toàn bộ pipeline phân loại
+python src/pipeline.py
+```
+
+### Chạy bằng Docker (Khuyên dùng trên Máy ảo)
+Việc cấu hình `.dockerignore` giúp quá trình build container cực nhẹ (chỉ gửi ~1.20kB mã nguồn):
+```bash
+# Khởi dựng và chạy
 docker compose up --build
 ```
 
----
-
-## 🧪 Kiểm Thử Phần Mềm (Testing)
-
-Dự án sử dụng `pytest` để kiểm thử tự động các chức năng chuẩn hóa dữ liệu đầu vào.
-
-Chạy test suite cục bộ:
+### Cấu hình Cron Job trên máy ảo
+Để hệ thống tự động chạy vào lúc 3h30 sáng hàng ngày:
 ```bash
-pytest
+30 3 * * * cd /path/to/CRM-Classification-Pipeline && docker compose up --build >> /var/log/crm_automation.log 2>&1
 ```
 
-Các test case sẽ tự động được chạy thông qua **GitHub Actions CI Pipeline** trên mỗi lượt Push hoặc Pull Request để đảm bảo code luôn hoạt động ổn định trước khi tích hợp.
+---
+
+## <a name="technical-design"></a>💡 Thiết kế kỹ thuật (Technical Design)
+
+```mermaid
+graph TD
+    A[SharePoint Nguồn Site A] -->|Download file| B(pipeline.py)
+    B -->|Schema Check & Backup| C{Lọc Dòng Mới}
+    C -->|Lấy ActivityId so khớp Lịch sử DB| D[Chỉ phân loại dòng Delta]
+    D -->|Step 1: Regex Classifier| E{Đủ thông tin?}
+    E -->|Chưa đủ/Mơ hồ| F[Step 2: Gemini API Batching]
+    E -->|Đã đủ nhãn| G[Gộp kết quả]
+    F -->|Checkpoint lưu liên tục| G
+    G -->|Tải file đích từ Site B| H[Merge an toàn theo ID]
+    H -->|Áp dụng Premium Excel Styling| I[Lưu file cục bộ]
+    I -->|Upload đè| J[SharePoint Đích Site B]
+    J -->|Gửi báo cáo qua Graph Mail| K[Email thông báo]
+    
+    style A fill:#fff2cc,stroke:#d6b656
+    style J fill:#e2efda,stroke:#82b366
+    style K fill:#e8d5f5,stroke:#9673a6
+```
+
+### Các quyết định thiết kế cốt lõi:
+1. **Lọc dòng Delta:** Giữ file CSDL lịch sử `output/classified_history_db.json`. Chỉ gửi những dòng mới cho LLM giúp tiết kiệm **95% chi phí API** khi tệp phát sinh theo ngày.
+2. **Ánh xạ khóa chính `ActivityId`:** Tuyệt đối không dùng dòng thứ tự vật lý (`row_idx`) để ghi đè kết quả. Điều này giúp chống xô lệch dữ liệu khi người dùng SharePoint chỉnh sửa cấu trúc dòng trực tiếp.
+3. **Cơ chế Checkpoint tự phục hồi:** Quá trình gọi Gemini được chia nhỏ thành các batch (mặc định 40 dòng) và lưu checkpoint liên tục. Nếu xảy ra sự cố mạng, pipeline tự động chạy tiếp từ batch cuối cùng khi được khởi động lại.
+4. **Premium Excel Styling:** Bảng đầu ra được định dạng chuyên nghiệp với Double-header (tiêu đề 2 dòng có gộp ô), màu sắc theo 5 nhóm nghiệp vụ chính, căn rộng tự động cho tiêu đề Segoe UI.
 
 ---
 
-## 📊 Hiệu Suất & Tối Ưu Chi Phí (Evaluation & Cost Optimization)
+## <a name="performance-metrics"></a>📊 Hiệu suất & Đánh giá (Performance & Metrics)
 
-Qua thực nghiệm đánh giá hệ thống trên tập dữ liệu CRM quy mô lớn, pipeline đạt được các chỉ số tối ưu hóa sau:
-
-* **Tối ưu hóa chi phí (Cost Savings):** Việc sử dụng bộ lọc Regex (Step 1) trước khi gọi LLM giúp tự động dán nhãn chính xác cho **~30%** số ô dữ liệu. Điều này giúp giảm 30% số lượng token gửi lên Gemini API, tiết kiệm chi phí vận hành đáng kể.
-* **Tốc độ xử lý (Throughput):** Nhờ cơ chế đa luồng (`ThreadPoolExecutor` với 5 workers song song), tốc độ xử lý trung bình đạt **~200 dòng/phút**, rút ngắn thời gian xử lý toàn bộ 27,000 dòng xuống dưới 2.5 giờ.
-* **Độ chính xác (Accuracy):** Đánh giá ngẫu nhiên trên 500 mẫu đối chiếu với chuyên viên dán nhãn thủ công đạt độ tương đồng chính xác **~94%** (các trường hợp sai lệch chủ yếu rơi vào các câu viết tắt nặng hoặc không đủ ngữ cảnh, được hệ thống gắn nhãn `"mơ hồ"` để lọc thủ công một cách an toàn).
+* **Tốc độ xử lý:** Nhờ cơ chế đa luồng song song, tốc độ đạt **~200 dòng/phút**.
+* **Độ chính xác:** Đạt độ tương đồng **~94%** so với chuyên viên dán nhãn thủ công. Các trường hợp viết tắt quá nặng hoặc thiếu ngữ cảnh được hệ thống điền `"mơ hồ"` một cách an toàn để lọc thủ công.
+* **Tính ổn định:** Hệ thống tích hợp xử lý Rate Limit (lỗi 429) bằng cơ chế adaptive delay (exponential backoff) giúp duy trì kết nối ổn định dưới tần suất quét cao.
 
 ---
 
-## 💡 Quyết Định Thiết Kế Kỹ Thuật (Design Decisions & Trade-offs)
+## <a name="testing-cicd"></a>🧪 Kiểm thử phần mềm & CI/CD (Testing & CI-CD)
 
-* **Tại sao dùng ActivityId làm Index gộp dữ liệu?** 
-  * *Vấn đề:* Người dùng SharePoint thường xuyên thao tác chèn dòng, xóa dòng, hoặc Sort lại dữ liệu làm dịch chuyển số thứ tự dòng vật lý (`row_idx`).
-  * *Giải pháp:* Ghi nhận kết quả phân loại ánh xạ theo `ActivityId`. Dù vị trí dòng trong file Excel thay đổi, code vẫn đối chiếu và cập nhật chính xác tuyệt đối.
-* **Xử lý Rate Limit 429 và Timeout 5s của SDK:**
-  * *Vấn đề:* Gọi API hàng chục nghìn dòng với tốc độ cao dễ gây lỗi nghẽn cổ chai (Quota Exhausted) or lỗi timeout do model sinh văn bản tiếng Việt dài.
-  * *Giải pháp:* Tăng timeout của client lên 120s, chia sub-batch nhỏ (20-40 dòng/lượt), và cấu hình hàm delay thích ứng (exponential backoff with jitter) để tự động ngủ đông khi gặp lỗi 429 trước khi thử lại.
+### Chạy kiểm thử tự động
+Dự án sử dụng `pytest` để kiểm thử logic phân loại Regex và tích hợp mock dịch vụ bên ngoài (SharePoint API, Graph Mail):
+```bash
+pytest -vv -s
+```
 
+### GitHub Actions CI
+Mỗi lượt commit/push lên nhánh `main` đều kích hoạt kịch bản kiểm tra chất lượng tự động được định nghĩa tại `.github/workflows/ci.yml`. Mã nguồn chỉ được triển khai khi vượt qua toàn bộ 7 test case thành công.
