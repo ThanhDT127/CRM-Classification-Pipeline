@@ -1,16 +1,12 @@
 import sys
 from pathlib import Path
 
-# Clear any conflicting modules from system cache to prevent collision with automation tests
-for mod in ["config", "step1_classify", "step3_call_llm", "step2_prepare_llm", "step4_merge"]:
-    sys.modules.pop(mod, None)
-
 # Add src to sys.path at the beginning
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
-from step3_call_llm import _norm_ddmmyy
-from step1_classify import _clean, _has_price
+from llm import _norm_ddmmyy
+from classifier import _clean, _has_price
 
 def test_norm_ddmmyy():
     # Test YMD format

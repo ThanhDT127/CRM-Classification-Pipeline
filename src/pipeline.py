@@ -14,12 +14,12 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 import config
-from step1_classify import (
+from classifier import (
     classify_row_regex,
     _compile_patterns,
     _clean
 )
-from step3_call_llm import init_llm_client, call_llm_batch
+from llm import init_llm_client, call_llm_batch
 from sharepoint import AuthProvider, SharePointClient
 from notification import NotificationService
 
@@ -232,8 +232,12 @@ def run_automation_pipeline() -> bool:
             pass
 
     try:
-        # 1. Download file from SharePoint
-        sp_client.download_file(config.SHAREPOINT_FILE_PATH, local_excel_path)
+        # 1. Download file from SharePoint Source site
+        sp_client.download_file(
+            config.SHAREPOINT_SOURCE_FILE_PATH, 
+            local_excel_path, 
+            drive_id=config.SHAREPOINT_SOURCE_DRIVE_ID
+        )
         
         # 2. Schema Validation
         df = pd.read_excel(local_excel_path)
@@ -243,7 +247,7 @@ def run_automation_pipeline() -> bool:
             if col not in df.columns:
                 raise ValueError(f"Schema mismatch: missing column '{col}'")
 
-        # 3. Create Backup
+        # 3. Create Backup of the input file
         config.PATH_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = config.PATH_BACKUP_DIR / f"CRM_merge_backup_{timestamp}.xlsx"
@@ -282,7 +286,7 @@ def run_automation_pipeline() -> bool:
                     "Đề xuất": row.get("Đề xuất")
                 })
 
-        logger.info("Total rows in file: %d | New delta rows to classify: %d", len(df), len(pending_rows))
+        logger.info("Total rows in source file: %d | New delta rows to classify: %d", len(df), len(pending_rows))
 
         cells_filled_count = 0
         
@@ -352,45 +356,78 @@ def run_automation_pipeline() -> bool:
                 json.dump(history_db, f, ensure_ascii=False, indent=2)
             logger.info("JSON History database successfully updated.")
 
-        # 6. Gộp kết quả an toàn bằng Index (Merge safely by ActivityId index)
-        for col in config.OUTPUT_COLUMNS:
-            if col not in df.columns:
-                df[col] = None
-            df[col] = df[col].astype(object)
+        # 6. Tải file đích từ SharePoint Target site (hoặc khởi tạo từ df nếu chưa tồn tại)
+        target_excel_path = config.PATH_OUTPUT / "CRM_classified.xlsx"
+        if target_excel_path.exists():
+            try:
+                target_excel_path.unlink()
+            except Exception:
+                pass
 
-        df.set_index("ActivityId", inplace=True)
+        target_exists = sp_client.check_file_exists(
+            config.SHAREPOINT_TARGET_FILE_PATH, 
+            drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
+        )
+        
+        if target_exists:
+            logger.info("Downloading existing target file from SharePoint Target site...")
+            sp_client.download_file(
+                config.SHAREPOINT_TARGET_FILE_PATH, 
+                target_excel_path, 
+                drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
+            )
+            target_df = pd.read_excel(target_excel_path)
+        else:
+            logger.info("Target file does not exist on SharePoint. Initializing from source schema...")
+            target_df = df.copy()
+
+        # 6.1 Gộp kết quả an toàn bằng Index (Merge safely by ActivityId index)
+        for col in config.OUTPUT_COLUMNS:
+            if col not in target_df.columns:
+                target_df[col] = None
+            target_df[col] = target_df[col].astype(object)
+
+        target_df.set_index("ActivityId", inplace=True)
         
         for act_id, fills in history_db.items():
-            if act_id in df.index:
+            if act_id in target_df.index:
                 for col in config.OUTPUT_COLUMNS:
                     val = fills.get(col)
-                    current_val = df.at[act_id, col]
+                    current_val = target_df.at[act_id, col]
                     is_empty_or_mo_ho = pd.isna(current_val) or str(current_val).strip() == '' or str(current_val).strip().lower() == 'mơ hồ'
                     
                     if is_empty_or_mo_ho and val is not None:
-                        df.at[act_id, col] = val
+                        target_df.at[act_id, col] = val
                         cells_filled_count += 1
                     elif is_empty_or_mo_ho and val is None:
-                        df.at[act_id, col] = None
+                        target_df.at[act_id, col] = None
 
-        df.reset_index(inplace=True)
+        target_df.reset_index(inplace=True)
 
-        # 7. Write locally, apply styles
-        df.to_excel(local_excel_path, index=False)
-        apply_excel_styling(local_excel_path)
+        # 7. Ghi file đích cục bộ, áp dụng styles
+        target_df.to_excel(target_excel_path, index=False)
+        apply_excel_styling(target_excel_path)
         
-        # 8. Upload back to SharePoint
-        sp_client.upload_file(local_excel_path, config.SHAREPOINT_FILE_PATH)
+        # 8. Upload file đích ngược lại SharePoint Target site
+        sp_client.upload_file(
+            target_excel_path, 
+            config.SHAREPOINT_TARGET_FILE_PATH, 
+            drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
+        )
         
         elapsed = time.time() - t0
         logger.info("[SUCCESS] Pipeline execution finished in %.1fs!", elapsed)
         
-        # 9. Send success email
+        # 9. Gửi email báo cáo thành công
         notifier.send_success(elapsed, len(pending_rows), cells_filled_count)
         
-        # 10. Runtime Clean up of local temporary file
-        if local_excel_path.exists():
-            local_excel_path.unlink()
+        # 10. Dọn dẹp các file Excel tạm cục bộ
+        for p in (local_excel_path, target_excel_path):
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
             
         return True
 
@@ -398,18 +435,19 @@ def run_automation_pipeline() -> bool:
         err_msg = traceback.format_exc()
         logger.error("Pipeline crashed! Exception traceback:\n%s", err_msg)
         
-        # Send error notification email
+        # Gửi email báo cáo lỗi
         try:
             notifier.send_error(err_msg)
         except Exception as mail_err:
             logger.error("Failed to send error notification email: %s", mail_err)
             
-        # Clean up local temporary file if left
-        if local_excel_path.exists():
-            try:
-                local_excel_path.unlink()
-            except Exception:
-                pass
+        # Dọn dẹp tệp tạm
+        for p in (local_excel_path, config.PATH_OUTPUT / "CRM_classified.xlsx"):
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
                 
         return False
 

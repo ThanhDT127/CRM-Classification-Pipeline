@@ -48,20 +48,21 @@ class AuthProvider:
 
 class SharePointClient:
     """Downloads and uploads files from/to SharePoint via MS Graph API."""
-    def __init__(self, auth: AuthProvider) -> None:
+    def __init__(self, auth: AuthProvider, default_drive_id: str = "") -> None:
         self.auth = auth
-        self.drive_id = config.SHAREPOINT_DRIVE_ID
+        self.default_drive_id = default_drive_id or config.SHAREPOINT_SOURCE_DRIVE_ID
         self.session = requests.Session()
 
-    def _url(self, path: str = "") -> str:
-        return f"{config.GRAPH_BASE}/drives/{self.drive_id}/{path}".rstrip("/")
+    def _url(self, path: str = "", drive_id: str = "") -> str:
+        active_drive = drive_id or self.default_drive_id
+        return f"{config.GRAPH_BASE}/drives/{active_drive}/{path}".rstrip("/")
 
-    def download_file(self, remote_file_path: str, local_path: Path) -> Path:
+    def download_file(self, remote_file_path: str, local_path: Path, drive_id: str = "") -> Path:
         """Download file by its path relative to the drive root."""
         logger.info("Downloading file from SharePoint: %s ...", remote_file_path)
         # Url encode path segment
         escaped_path = "/".join(quote(p) for p in remote_file_path.split("/"))
-        url = self._url(f"root:/{escaped_path}")
+        url = self._url(f"root:/{escaped_path}", drive_id=drive_id)
         
         # Get metadata to get download URL
         response = self.session.get(url, headers=self.auth.get_headers())
@@ -84,14 +85,21 @@ class SharePointClient:
         logger.info("[OK] Download complete: %s (%d bytes)", local_path.name, local_path.stat().st_size)
         return local_path
 
-    def upload_file(self, local_path: Path, remote_file_path: str) -> dict:
+    def check_file_exists(self, remote_file_path: str, drive_id: str = "") -> bool:
+        """Check if file exists on SharePoint."""
+        escaped_path = "/".join(quote(p) for p in remote_file_path.split("/"))
+        url = self._url(f"root:/{escaped_path}", drive_id=drive_id)
+        response = self.session.get(url, headers=self.auth.get_headers())
+        return response.status_code == 200
+
+    def upload_file(self, local_path: Path, remote_file_path: str, drive_id: str = "") -> dict:
         """Upload file to SharePoint overwriting the file at remote_file_path."""
         logger.info("Uploading file to SharePoint: %s -> %s ...", local_path.name, remote_file_path)
         if not local_path.exists():
             raise FileNotFoundError(f"Local file not found to upload: {local_path}")
             
         escaped_path = "/".join(quote(p) for p in remote_file_path.split("/"))
-        url = self._url(f"root:/{escaped_path}:/content")
+        url = self._url(f"root:/{escaped_path}:/content", drive_id=drive_id)
         
         # Binary put request: headers must exclude Content-Type JSON
         headers = {k: v for k, v in self.auth.get_headers().items() if k != "Content-Type"}

@@ -8,17 +8,13 @@ import pytest
 import pandas as pd
 import openpyxl
 
-# Clear any conflicting modules from system cache to prevent collision with pipeline tests
-for mod in ["config", "step1_classify", "step3_call_llm", "main", "sharepoint", "notification"]:
-    sys.modules.pop(mod, None)
-
-# Add automation/src to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "automation" / "src"))
+# Add src to path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import config
 from sharepoint import AuthProvider, SharePointClient
 from notification import NotificationService
-import main
+import pipeline as main
 
 @pytest.fixture
 def mock_auth():
@@ -91,13 +87,14 @@ def test_notification_service_send_email(mock_auth):
     assert success is True
     notifier.session.post.assert_called_once()
 
-@patch("main.AuthProvider")
-@patch("main.SharePointClient")
-@patch("main.NotificationService")
-@patch("main.init_llm_client")
-@patch("main.call_llm_batch")
+@patch("pipeline.AuthProvider")
+@patch("pipeline.SharePointClient")
+@patch("pipeline.NotificationService")
+@patch("pipeline.init_llm_client")
+@patch("pipeline.call_llm_batch")
 def test_full_pipeline_run(mock_call_llm, mock_init_llm, mock_notifier_cls, mock_sp_cls, mock_auth_cls):
-    # Setup mocks
+    print(">>> main module name:", main.__name__)
+    print(">>> sys.modules pipeline keys:", [k for k in sys.modules if "pipeline" in k or "main" in k])
     mock_auth_inst = MagicMock()
     mock_auth_cls.return_value = mock_auth_inst
     
@@ -115,10 +112,12 @@ def test_full_pipeline_run(mock_call_llm, mock_init_llm, mock_notifier_cls, mock
         tmp_path = Path(tmpdir)
         
         # Override config paths for testing
+        config.PATH_OUTPUT = tmp_path / "output"
+        config.PATH_OUTPUT.mkdir(parents=True, exist_ok=True)
         config.PATH_INPUT = tmp_path / "CRM_merge.xlsx"
         config.PATH_BACKUP_DIR = tmp_path / "backups"
-        config.DB_JSON_PATH = tmp_path / "classified_history_db.json"
-        config.CKPT_JSON = tmp_path / "llm_fills_checkpoint.json"
+        config.DB_JSON_PATH = config.PATH_OUTPUT / "classified_history_db.json"
+        config.CKPT_JSON = config.PATH_OUTPUT / "llm_fills_checkpoint.json"
         
         # Create a mock Excel sheet that needs classification
         df = pd.DataFrame([
@@ -134,10 +133,11 @@ def test_full_pipeline_run(mock_call_llm, mock_init_llm, mock_notifier_cls, mock
         df.to_excel(config.PATH_INPUT, index=False)
         
         # Mock download_file to write the Excel file when called (since the pipeline unlinks it initially)
-        def side_effect_download(remote_path, local_path):
+        def side_effect_download(remote_path, local_path, *args, **kwargs):
             df.to_excel(local_path, index=False)
             return local_path
         mock_sp_inst.download_file.side_effect = side_effect_download
+        mock_sp_inst.check_file_exists.return_value = False
         
         # Mock LLM API response
         mock_call_llm.return_value = [

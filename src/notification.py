@@ -70,7 +70,7 @@ class NotificationService:
                 <tr style="border-bottom: 1px solid #ddd;"><td style="padding: 8px 0; color: #666;">Số dòng mới (Delta):</td><td style="padding: 8px 0; font-weight: bold; color: #28a745;">{new_rows} dòng</td></tr>
                 <tr style="border-bottom: 1px solid #ddd;"><td style="padding: 8px 0; color: #666;">Số ô được điền:</td><td style="padding: 8px 0; font-weight: bold;">{cells_filled} ô</td></tr>
                 <tr style="border-bottom: 1px solid #ddd;"><td style="padding: 8px 0; color: #666;">Thời gian xử lý:</td><td style="padding: 8px 0;">{duration_s:.1f} giây</td></tr>
-                <tr style="border-bottom: 1px solid #ddd;"><td style="padding: 8px 0; color: #666;">File SharePoint:</td><td style="padding: 8px 0; font-family: monospace;">{config.SHAREPOINT_FILE_PATH}</td></tr>
+                <tr style="border-bottom: 1px solid #ddd;"><td style="padding: 8px 0; color: #666;">File SharePoint:</td><td style="padding: 8px 0; font-family: monospace;">{config.SHAREPOINT_TARGET_FILE_PATH}</td></tr>
             </table>
             <p style="color: #888; font-size: 12px; margin-top: 25px; border-top: 1px solid #eee; padding-top: 10px;">
                 Đây là email tự động từ hệ thống máy ảo CRM Automation Daemon. Vui lòng không trả lời email này.
@@ -94,7 +94,7 @@ class NotificationService:
             <p>Hệ thống tự động chạy ngầm gặp sự cố nghiêm trọng và phải dừng chạy khẩn cấp. <b>File Excel trên SharePoint giữ nguyên không bị thay đổi.</b></p>
             <table style="width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 15px;">
                 <tr style="border-bottom: 1px solid #ddd;"><td style="padding: 8px 0; color: #666; width: 180px;">Thời điểm lỗi:</td><td style="padding: 8px 0; font-weight: bold;">{timestamp}</td></tr>
-                <tr style="border-bottom: 1px solid #ddd;"><td style="padding: 8px 0; color: #666;">Tệp mục tiêu:</td><td style="padding: 8px 0; font-family: monospace;">{config.SHAREPOINT_FILE_PATH}</td></tr>
+                <tr style="border-bottom: 1px solid #ddd;"><td style="padding: 8px 0; color: #666;">Tệp mục tiêu:</td><td style="padding: 8px 0; font-family: monospace;">{config.SHAREPOINT_TARGET_FILE_PATH}</td></tr>
             </table>
             <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; border: 1px solid #e9ecef; font-family: monospace; font-size: 13px; color: #c00; overflow-x: auto; white-space: pre-wrap;">
 {error_display}
