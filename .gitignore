@@ -1,10 +1,15 @@
 # Environment & secrets
 .env
+sa-key.json
+automation/.env
+automation/sa-key.json
 
 # Data files (too large for git)
 data/
 output/
 docs/
+automation/data/
+automation/output/
 
 # Python
 __pycache__/
@@ -14,6 +19,7 @@ __pycache__/
 dist/
 build/
 .eggs/
+.pytest_cache/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -27,3 +33,11 @@ build/
 # OS
 Thumbs.db
 .DS_Store
+
+# Debug & Temp Developer scripts
+src/debug_row33.py
+src/debug_row33_out.txt
+src/preview_merge.py
+src/test_batch118.py
+src/verify_output.py
+

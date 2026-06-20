@@ -1,146 +1,243 @@
 """
 CRM Classification Pipeline - Step 1: Regex Classification
 ============================================================
-Read CRM_TDCTDA.xlsx, apply keyword-based regex classification,
+Read CRM_merge.xlsx, apply keyword-based regex classification,
 and export CRM_classified.xlsx.
+
+Rules (matching notebook logic):
+- 'Tình hình hiện tại' copies directly from column R.
+- Hoạt Động CRM, Đối Thủ Cạnh Tranh, AETT, Khách Hàng → use S+T only.
+- Kế Hoạch → use U+V only. Đề xuất → V only.
+- If keywords match >=2 tags for same column → 'mơ hồ'.
+- AETT 'Nội dung làm việc': price indicator → 'Tư vấn khảo sát'.
+- AETT 'Nội dung làm việc': no match but S/T has data → 'mơ hồ'.
 """
 
 import re
-import sys
 import pandas as pd
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from unidecode import unidecode
 
 from config import (
     PATH_INPUT,
     PATH_KW_JSON,
     PATH_OUTPUT_REGEX,
-    INPUT_TEXT_COLUMNS,
     OUTPUT_COLUMNS,
     COL_CURRENT_STATUS,
     COL_CURRENT_STATUS_SOURCE,
     COL_BRANDS,
+    COL_WORK_CRM,
+    COL_PROGRESS,
+    COL_PICKUP,
+    COL_COMP_WORK,
+    COL_COMP_SUBJECT,
+    COL_ADVANTAGE,
+    COL_SUBJECT_AETT,
+    COL_MARKETING,
+    COL_OPINION,
+    COL_REVIEW,
+    COL_PLAN_NEXT,
+    COL_DATE_PLAN,
+    COL_PROPOSAL,
     load_keywords,
     build_keyword_index,
 )
 
+# ─── Source column names ────────────────────────────────────────────────────
+COL_R = "Tình trạng hiện tại"
+COL_S = "Tình hình tiến độ công trình"
+COL_T = "Nội dung làm việc, yêu cầu KH & đánh giá"
+COL_U = "Kế hoạch lần tới"
+COL_V = "Đề xuất"
+
+# Columns that read from S+T
+ST_COLUMNS = [
+    COL_PROGRESS, COL_WORK_CRM, COL_MARKETING, COL_SUBJECT_AETT,
+    COL_OPINION, COL_REVIEW,
+    COL_COMP_WORK, COL_COMP_SUBJECT, COL_ADVANTAGE,
+]
+
+# Price indicator keywords (for AETT fallback)
+PRICE_KEYWORDS = ["triệu", "tỷ", "vnđ", "vnd", "usd", "đô", "đồng"]
+
+
+# ─── Text helpers ───────────────────────────────────────────────────────────
+def _clean(v: Any) -> str:
+    """Clean a cell value to trimmed string, or '' for blanks."""
+    if v is None:
+        return ""
+    s = str(v).strip()
+    return "" if s.lower() in ("nan", "none", "null", "") else s
+
+
+def _has_price(text: str) -> bool:
+    low = text.lower()
+    return any(kw in low for kw in PRICE_KEYWORDS)
+
 
 # ─── Regex helpers ──────────────────────────────────────────────────────────
-def _build_pattern(kws: List[str]) -> Optional[re.Pattern]:
-    """Build a compiled regex from a list of keyword strings."""
-    if not kws:
-        return None
-    escaped = [re.escape(k) for k in kws if k]
-    if not escaped:
-        return None
-    return re.compile("|".join(escaped), re.IGNORECASE)
+def _compile_patterns(kws: List[str]) -> List[re.Pattern]:
+    """Build word-boundary regex patterns, including unidecoded variants."""
+    pats: List[re.Pattern] = []
+    for kw in kws:
+        kw = kw.strip()
+        if not kw:
+            continue
+        pats.append(re.compile(rf"(?<!\w){re.escape(kw)}(?!\w)", re.IGNORECASE))
+        ascii_kw = unidecode(kw)
+        if ascii_kw != kw:
+            pats.append(re.compile(rf"(?<!\w){re.escape(ascii_kw)}(?!\w)", re.IGNORECASE))
+    return pats
 
 
-def classify_row(
-    txt: str,
-    kw_index: Dict[str, Dict[str, List[str]]],
-    brand_pattern: Optional[re.Pattern],
-) -> Dict[str, Optional[str]]:
-    """Given the merged text of a row, return {col: label_or_None}."""
-    result: Dict[str, Optional[str]] = {}
+def _matches(text: str, pats: List[re.Pattern]) -> bool:
+    """Check if text (or its ASCII form) matches any pattern."""
+    if not text or not pats:
+        return False
+    ascii_text = unidecode(text)
+    return any(p.search(text) or p.search(ascii_text) for p in pats)
 
-    for col, labels_dict in kw_index.items():
-        match_found = None
-        for label, keywords in labels_dict.items():
-            pat = _build_pattern(keywords)
-            if pat and pat.search(txt):
-                match_found = label
+
+def _find_labels(text: str, label_pats: Dict[str, List[re.Pattern]]) -> List[str]:
+    """Return all labels whose keywords appear in text (stable order)."""
+    return [lbl for lbl, pats in label_pats.items() if _matches(text, pats)]
+
+
+def _pick(labels: List[str]) -> Optional[str]:
+    """1 label → return it; ≥2 → 'mơ hồ'; 0 → None."""
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) >= 2:
+        return "mơ hồ"
+    return None
+
+
+def _find_brands(text: str, brand_pats: List[Tuple[str, List[re.Pattern]]]) -> List[str]:
+    """Return all brand names found in text (deduplicated, title-cased)."""
+    if not text:
+        return []
+    ascii_text = unidecode(text)
+    found, seen = [], set()
+    for brand_name, pats in brand_pats:
+        for p in pats:
+            m = p.search(text) or p.search(ascii_text)
+            if m:
+                surface = m.group().strip().title()
+                key = surface.lower()
+                if key not in seen:
+                    found.append(surface)
+                    seen.add(key)
                 break
-        result[col] = match_found
-
-    # Brands column: find all matching brands
-    if brand_pattern:
-        found = brand_pattern.findall(txt)
-        if found:
-            unique = []
-            seen_lower = set()
-            for b in found:
-                if b.lower() not in seen_lower:
-                    unique.append(b)
-                    seen_lower.add(b.lower())
-            result[COL_BRANDS] = "; ".join(unique)
-        else:
-            result[COL_BRANDS] = None
-
-    return result
+    return found
 
 
+# ─── Main ───────────────────────────────────────────────────────────────────
 def main():
-    # 1. Load keywords
+    # 1. Load keywords & build compiled patterns
     print(f"Loading keywords from {PATH_KW_JSON.name} ...")
     kw = load_keywords()
-    kw_index, brands = build_keyword_index(kw)
+    kw_index, brand_list = build_keyword_index(kw)
     print(f"  Columns indexed: {len(kw_index)}")
-    print(f"  Brands: {len(brands)}")
+    print(f"  Brands: {len(brand_list)}")
 
-    brand_pattern = _build_pattern(brands) if brands else None
+    col_pats: Dict[str, Dict[str, List[re.Pattern]]] = {}
+    for col, labels_dict in kw_index.items():
+        col_pats[col] = {lbl: _compile_patterns(kws) for lbl, kws in labels_dict.items()}
 
-    # 2. Read input Excel
+    brand_pats = [(b, _compile_patterns([b])) for b in brand_list]
+
+    # 2. Read input
     print(f"\nReading {PATH_INPUT.name} ...")
     df = pd.read_excel(PATH_INPUT)
     print(f"  Rows: {len(df)}, Columns: {len(df.columns)}")
 
-    # 3. Add row_idx (1-based, matching notebook convention)
     df["row_idx"] = range(2, len(df) + 2)
 
-    # 4. Merge text from source columns
-    def _merge_text(row: pd.Series) -> str:
-        parts = []
-        for col in INPUT_TEXT_COLUMNS:
-            v = row.get(col)
-            if pd.notna(v):
-                txt = str(v).strip()
-                if txt:
-                    parts.append(txt)
-        return " ".join(parts)
-
-    df["_merged_text"] = df.apply(_merge_text, axis=1)
-
-    # 5. Initialise output columns
     for col in OUTPUT_COLUMNS:
         if col not in df.columns:
             df[col] = None
 
-    # 6. COL_CURRENT_STATUS = direct copy from 'Tình trạng hiện tại'
+    # 3. Direct copy: R → COL_CURRENT_STATUS
     if COL_CURRENT_STATUS_SOURCE in df.columns:
         df[COL_CURRENT_STATUS] = df[COL_CURRENT_STATUS_SOURCE]
     else:
-        print(f"  ⚠️ Source column '{COL_CURRENT_STATUS_SOURCE}' not found in input")
+        print(f"  ⚠️ Column '{COL_CURRENT_STATUS_SOURCE}' not found")
 
-    # 7. Apply regex classification
+    # 4. Classify
     print("\nRunning regex classification ...")
-    classified = 0
+    n_classified, n_ambiguous = 0, 0
+
     for idx, row in df.iterrows():
-        txt = row.get("_merged_text", "")
-        if not txt:
-            continue
-        labels = classify_row(txt, kw_index, brand_pattern)
-        for col, val in labels.items():
-            if val is not None and col in df.columns:
+        text_s = _clean(row.get(COL_S))
+        text_t = _clean(row.get(COL_T))
+        text_u = _clean(row.get(COL_U))
+        text_v = _clean(row.get(COL_V))
+
+        text_st = " | ".join(x for x in [text_s, text_t] if x)
+        text_uv = " | ".join(x for x in [text_u, text_v] if x)
+        has_st = bool(text_s or text_t)
+
+        # ── S+T columns (CRM, Đối thủ, AETT, Khách hàng) ──
+        for col in ST_COLUMNS:
+            if col not in col_pats:
+                continue
+            val = _pick(_find_labels(text_st, col_pats[col]))
+            if val is not None:
                 df.at[idx, col] = val
-                classified += 1
+                n_classified += 1
+                if val == "mơ hồ":
+                    n_ambiguous += 1
 
-    # 8. Drop helper column
-    df.drop(columns=["_merged_text"], inplace=True)
+        # ── AETT Nội dung làm việc: special fallback rules ──
+        cur = df.at[idx, COL_WORK_CRM]
+        if cur is None or (isinstance(cur, float) and pd.isna(cur)):
+            if _has_price(text_st):
+                df.at[idx, COL_WORK_CRM] = "Tư vấn khảo sát"
+                n_classified += 1
+            elif has_st:
+                df.at[idx, COL_WORK_CRM] = "mơ hồ"
+                n_classified += 1
+                n_ambiguous += 1
 
-    # 9. Export
+        # ── Brands from S+T ──
+        brands = _find_brands(text_st, brand_pats)
+        if brands:
+            df.at[idx, COL_BRANDS] = "; ".join(brands)
+            n_classified += 1
+
+        # ── U+V columns (Kế hoạch) ──
+        if COL_PLAN_NEXT in col_pats:
+            val = _pick(_find_labels(text_uv, col_pats[COL_PLAN_NEXT]))
+            if val is not None:
+                df.at[idx, COL_PLAN_NEXT] = val
+                n_classified += 1
+                if val == "mơ hồ":
+                    n_ambiguous += 1
+
+        if COL_PROPOSAL in col_pats:
+            val = _pick(_find_labels(text_v, col_pats[COL_PROPOSAL]))
+            if val is not None:
+                df.at[idx, COL_PROPOSAL] = val
+                n_classified += 1
+                if val == "mơ hồ":
+                    n_ambiguous += 1
+
+        # Date columns (COL_PICKUP, COL_DATE_PLAN) left for LLM
+
+    # 5. Export
     df.to_excel(PATH_OUTPUT_REGEX, index=False)
     print(f"\n✓ Regex classification done!")
-    print(f"  Total label assignments: {classified}")
+    print(f"  Label assignments: {n_classified}")
+    print(f"  Ambiguous ('mơ hồ'): {n_ambiguous}")
     print(f"  Output: {PATH_OUTPUT_REGEX.name}")
 
-    # 10. Stats: how many cells are still empty per output column
-    print("\n  Empty cells per classification column:")
+    print("\n  Fill rates per classification column:")
     for col in OUTPUT_COLUMNS:
-        if col in df.columns:
-            n_empty = df[col].isna().sum() + (df[col].astype(str).str.strip() == "").sum()
-            pct = n_empty / len(df) * 100
-            print(f"    {col}: {n_empty} ({pct:.1f}%)")
+        if col not in df.columns:
+            continue
+        filled = len(df) - df[col].isna().sum() - (df[col].astype(str).str.strip() == "").sum()
+        pct = filled / len(df) * 100
+        print(f"    {col}: {filled}/{len(df)} ({pct:.1f}%)")
 
     return df
 

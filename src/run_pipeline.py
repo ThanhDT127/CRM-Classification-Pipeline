@@ -29,35 +29,35 @@ def main():
     print("=" * 60)
 
     if 1 in steps_to_run:
-        print("\n" + "─" * 40)
+        print("\n" + "-" * 40)
         print("STEP 1: Regex Classification")
-        print("─" * 40)
+        print("-" * 40)
         from step1_classify import main as step1
         step1()
 
     if 2 in steps_to_run:
-        print("\n" + "─" * 40)
+        print("\n" + "-" * 40)
         print("STEP 2: Prepare LLM Input")
-        print("─" * 40)
+        print("-" * 40)
         from step2_prepare_llm import main as step2
         step2()
 
     if 3 in steps_to_run:
-        print("\n" + "─" * 40)
+        print("\n" + "-" * 40)
         print("STEP 3: Call LLM (Gemini)")
-        print("─" * 40)
+        print("-" * 40)
         from step3_call_llm import main as step3
         step3()
 
     if 4 in steps_to_run:
-        print("\n" + "─" * 40)
+        print("\n" + "-" * 40)
         print("STEP 4: Merge LLM Results")
-        print("─" * 40)
+        print("-" * 40)
         from step4_merge import main as step4
         step4()
 
     print("\n" + "=" * 60)
-    print("✓ Pipeline finished!")
+    print("[OK] Pipeline finished!")
     print("=" * 60)
 
 
