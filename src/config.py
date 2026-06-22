@@ -37,7 +37,7 @@ SHAREPOINT_SOURCE_FILE_PATH = os.getenv("SHAREPOINT_SOURCE_FILE_PATH") or "CRM_m
 
 # SharePoint Target Configuration (Output)
 SHAREPOINT_TARGET_DRIVE_ID = os.getenv("SHAREPOINT_TARGET_DRIVE_ID") or "b!NtlOjnoIAUGK2TSeHPN7wre_0vBaUZhHrpr9lFi7hWvJ-n1mRHXzSr4E9Qjzat5Q"
-SHAREPOINT_TARGET_FILE_PATH = os.getenv("SHAREPOINT_TARGET_FILE_PATH") or "Data Lake to SharePoint/Phan_Tich_CRM/CRM_classified.xlsx"
+SHAREPOINT_TARGET_FILE_PATH = os.getenv("SHAREPOINT_TARGET_FILE_PATH") or "Data Lake to SharePoint/Phan_Tich_CRM/Phân loại dữ liệu công trình dự án CRM V4.xlsx"
 
 # Email Notification Configuration
 NOTIFICATION_SENDER_EMAIL = os.getenv("NOTIFICATION_SENDER_EMAIL") or ""

@@ -11,9 +11,9 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 from sharepoint import AuthProvider, SharePointClient
-
 def initialize():
-    excel_path = config.PATH_OUTPUT / "CRM_classified.xlsx"
+    target_file_name = Path(config.SHAREPOINT_TARGET_FILE_PATH).name
+    excel_path = config.PATH_OUTPUT / target_file_name
     if not excel_path.exists():
         excel_path = config.PATH_DATA / "CRM_merge.xlsx"
     if not excel_path.exists():

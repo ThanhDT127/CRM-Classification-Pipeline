@@ -357,7 +357,8 @@ def run_automation_pipeline() -> bool:
             logger.info("JSON History database successfully updated.")
 
         # 6. Tải file đích từ SharePoint Target site (hoặc khởi tạo từ df nếu chưa tồn tại)
-        target_excel_path = config.PATH_OUTPUT / "CRM_classified.xlsx"
+        target_file_name = Path(config.SHAREPOINT_TARGET_FILE_PATH).name
+        target_excel_path = config.PATH_OUTPUT / target_file_name
         if target_excel_path.exists():
             try:
                 target_excel_path.unlink()
@@ -442,7 +443,8 @@ def run_automation_pipeline() -> bool:
             logger.error("Failed to send error notification email: %s", mail_err)
             
         # Dọn dẹp tệp tạm
-        for p in (local_excel_path, config.PATH_OUTPUT / "CRM_classified.xlsx"):
+        target_file_name = Path(config.SHAREPOINT_TARGET_FILE_PATH).name
+        for p in (local_excel_path, config.PATH_OUTPUT / target_file_name):
             if p.exists():
                 try:
                     p.unlink()
