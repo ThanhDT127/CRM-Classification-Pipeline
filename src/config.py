@@ -32,11 +32,11 @@ AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID") or ""
 AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET") or ""
 
 # SharePoint Source Configuration (Input)
-SHAREPOINT_SOURCE_DRIVE_ID = os.getenv("SHAREPOINT_SOURCE_DRIVE_ID") or ""
+SHAREPOINT_SOURCE_DRIVE_ID = os.getenv("SHAREPOINT_SOURCE_DRIVE_ID") or "b!K2h3C6y-m0-nfhBTKpRGUHVm2ajJ6j5Liiy5S410oj50hc-yscOEQrZMgUgL5YIr"
 SHAREPOINT_SOURCE_FILE_PATH = os.getenv("SHAREPOINT_SOURCE_FILE_PATH") or "CRM_merge/CRM_merge.xlsx"
 
 # SharePoint Target Configuration (Output)
-SHAREPOINT_TARGET_DRIVE_ID = os.getenv("SHAREPOINT_TARGET_DRIVE_ID") or ""
+SHAREPOINT_TARGET_DRIVE_ID = os.getenv("SHAREPOINT_TARGET_DRIVE_ID") or "b!NtlOjnoIAUGK2TSeHPN7wre_0vBaUZhHrpr9lFi7hWvJ-n1mRHXzSr4E9Qjzat5Q"
 SHAREPOINT_TARGET_FILE_PATH = os.getenv("SHAREPOINT_TARGET_FILE_PATH") or "Data Lake to SharePoint/Phan_Tich_CRM/CRM_classified.xlsx"
 
 # Email Notification Configuration
