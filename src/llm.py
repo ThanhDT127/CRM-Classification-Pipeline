@@ -2,6 +2,8 @@ import json
 import time
 import random
 import httpx
+import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from google import genai
 from google.genai import types
@@ -11,7 +13,7 @@ import config
 def init_llm_client() -> tuple[genai.Client, str]:
     """Initialize client based on environment: Vertex AI or AI Studio."""
     use_vertex = os.getenv("USE_VERTEX", "True").lower() in ("true", "1", "yes")
-    sa_key_path = Path("/app/sa-key.json")
+    sa_key_path = config.PROJECT_ROOT / "sa-key.json"
     
     if use_vertex and sa_key_path.exists():
         print(">>> Using Google Vertex AI client...")

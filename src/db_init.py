@@ -90,19 +90,16 @@ def initialize():
             if not act_id or act_id.lower() in ("nan", "none", ""):
                 continue
                 
-            has_data = False
             row_fills = {}
             for col_name, sheet_col in mapping.items():
                 val = row.get(sheet_col)
                 if pd.notna(val) and str(val).strip() != "" and str(val).strip().lower() != "nan":
                     row_fills[col_name] = str(val).strip()
-                    has_data = True
                 else:
                     row_fills[col_name] = None
                     
-            if has_data:
-                history_db[act_id] = row_fills
-                count += 1
+            history_db[act_id] = row_fills
+            count += 1
     else:
         print("Single-header Excel format detected.")
         df = df_temp
@@ -130,19 +127,16 @@ def initialize():
             if not act_id or act_id.lower() in ("nan", "none", ""):
                 continue
                 
-            has_data = False
             row_fills = {}
             for col_name, sheet_col in mapping.items():
                 val = row.get(sheet_col)
                 if pd.notna(val) and str(val).strip() != "" and str(val).strip().lower() != "nan":
                     row_fills[col_name] = str(val).strip()
-                    has_data = True
                 else:
                     row_fills[col_name] = None
                     
-            if has_data:
-                history_db[act_id] = row_fills
-                count += 1
+            history_db[act_id] = row_fills
+            count += 1
 
     output_path = config.DB_JSON_PATH
     output_path.parent.mkdir(parents=True, exist_ok=True)

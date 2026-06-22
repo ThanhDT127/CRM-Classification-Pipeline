@@ -332,8 +332,13 @@ def run_automation_pipeline() -> bool:
                 
                 batch_size = config.BATCH_SIZE
                 llm_results = {}
-                for i in range(0, len(llm_input_payload), batch_size):
+                total_items = len(llm_input_payload)
+                for i in range(0, total_items, batch_size):
                     batch = llm_input_payload[i:i + batch_size]
+                    batch_num = (i // batch_size) + 1
+                    total_batches = (total_items + batch_size - 1) // batch_size
+                    logger.info("Processing LLM batch %d/%d (items %d-%d of %d)...", 
+                                batch_num, total_batches, i + 1, min(i + batch_size, total_items), total_items)
                     res = call_llm_batch(client, model_name, system_prompt, batch)
                     for item in res:
                         rid = str(item.get("row_idx"))
