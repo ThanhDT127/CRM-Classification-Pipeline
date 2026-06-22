@@ -14,10 +14,9 @@ from sharepoint import AuthProvider, SharePointClient
 def initialize():
     target_file_name = Path(config.SHAREPOINT_TARGET_FILE_PATH).name
     excel_path = config.PATH_OUTPUT / target_file_name
+    
     if not excel_path.exists():
-        excel_path = config.PATH_DATA / "CRM_merge.xlsx"
-    if not excel_path.exists():
-        print(f"Excel file not found locally. Downloading target file from SharePoint...")
+        print(f"Excel file '{target_file_name}' not found locally. Checking SharePoint...")
         auth = AuthProvider()
         client = SharePointClient(auth)
         
@@ -26,18 +25,24 @@ def initialize():
             drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
         )
         if target_exists:
+            print(f"Downloading target file from SharePoint...")
             excel_path = client.download_file(
                 config.SHAREPOINT_TARGET_FILE_PATH, 
                 excel_path, 
                 drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
             )
         else:
-            print("Target file not found on SharePoint. Downloading source file as fallback...")
-            excel_path = client.download_file(
-                config.SHAREPOINT_SOURCE_FILE_PATH, 
-                excel_path, 
-                drive_id=config.SHAREPOINT_SOURCE_DRIVE_ID
-            )
+            print("Target file not found on SharePoint. Checking local CRM_merge.xlsx fallback...")
+            local_merge = config.PATH_DATA / "CRM_merge.xlsx"
+            if local_merge.exists():
+                excel_path = local_merge
+            else:
+                print("Local CRM_merge.xlsx not found. Downloading source file from SharePoint...")
+                excel_path = client.download_file(
+                    config.SHAREPOINT_SOURCE_FILE_PATH, 
+                    excel_path, 
+                    drive_id=config.SHAREPOINT_SOURCE_DRIVE_ID
+                )
 
     print(f"Reading Excel file from {excel_path}...")
     df = pd.read_excel(excel_path)
