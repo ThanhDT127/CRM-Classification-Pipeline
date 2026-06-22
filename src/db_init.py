@@ -13,9 +13,9 @@ import config
 from sharepoint import AuthProvider, SharePointClient
 
 def initialize():
-    excel_path = Path("D:/Works/CRM/output/CRM_classified.xlsx")
+    excel_path = config.PATH_OUTPUT / "CRM_classified.xlsx"
     if not excel_path.exists():
-        excel_path = Path("D:/Works/CRM/data/CRM_merge.xlsx")
+        excel_path = config.PATH_DATA / "CRM_merge.xlsx"
     if not excel_path.exists():
         print(f"Excel file not found locally. Downloading target file from SharePoint...")
         auth = AuthProvider()
