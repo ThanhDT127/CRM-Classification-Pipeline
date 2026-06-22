@@ -405,124 +405,140 @@ def run_automation_pipeline() -> bool:
             drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
         )
         
-        if target_exists:
-            logger.info("Downloading existing target file from SharePoint Target site...")
-            sp_client.download_file(
-                config.SHAREPOINT_TARGET_FILE_PATH, 
+        if not target_exists:
+            logger.info("Target file does not exist on SharePoint. Initializing from source schema...")
+            # If target file doesn't exist, we save source df to excel and style it as base template
+            df.to_excel(target_excel_path, index=False)
+            apply_excel_styling(target_excel_path)
+            # Upload styled template to SharePoint
+            sp_client.upload_file(
                 target_excel_path, 
+                config.SHAREPOINT_TARGET_FILE_PATH, 
                 drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
             )
-            
-            # Read as double-header MultiIndex
-            df_raw = pd.read_excel(target_excel_path, header=[0, 1])
-            
-            # Flatten columns to [Group] Sub format
-            flat_cols = []
-            classification_groups = ["Hoạt Động CRM", "AETT", "Khách Hàng", "Kế Hoạch", "Đối Thủ Cạnh Tranh"]
-            for col in df_raw.columns:
-                major = str(col[0]).strip()
-                minor = str(col[1]).strip()
-                
-                if major.startswith("Unnamed:") or major.lower() in ("nan", "none", ""):
-                    major = ""
-                if minor.startswith("Unnamed:") or minor.lower() in ("nan", "none", ""):
-                    minor = ""
-                    
-                if major in classification_groups and minor:
-                    flat_cols.append(f"[{major}] {minor}")
-                else:
-                    col_name = major or minor
-                    flat_cols.append(col_name)
-                    
-            target_df = df_raw.copy()
-            target_df.columns = flat_cols
-            logger.info("Flattened target columns from double-header: %s", list(target_df.columns))
-        else:
-            logger.info("Target file does not exist on SharePoint. Initializing from source schema...")
-            target_df = df.copy()
-
-        # 6.1 Gộp kết quả an toàn bằng Index (Merge safely by ActivityId index)
-        for col in config.OUTPUT_COLUMNS:
-            if col not in target_df.columns:
-                target_df[col] = None
-            target_df[col] = target_df[col].astype(object)
-
-        # Convert ActivityId column to normalized strings before setting as index
-        target_df["ActivityId"] = target_df["ActivityId"].apply(config.normalize_id)
-        target_df.set_index("ActivityId", inplace=True)
         
-        # Build a lookup of source rows by ActivityId for appending new rows
+        logger.info("Downloading target file from SharePoint Target site...")
+        sp_client.download_file(
+            config.SHAREPOINT_TARGET_FILE_PATH, 
+            target_excel_path, 
+            drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
+        )
+        
+        # Open Excel workbook in openpyxl for in-place writing
+        logger.info("Opening target Excel file for in-place update...")
+        wb = openpyxl.load_workbook(target_excel_path)
+        ws = wb.active
+        
+        # 1. Clean up duplicate columns if any exist (from right to left to avoid index shift)
+        cols_to_delete = []
+        for col_idx in range(ws.max_column, 0, -1):
+            major = str(ws.cell(row=1, column=col_idx).value or "").strip()
+            minor = str(ws.cell(row=2, column=col_idx).value or "").strip()
+            is_dup = (
+                any(major.endswith(f".{i}") for i in range(1, 100)) or
+                any(minor.endswith(f".{i}") for i in range(1, 100)) or
+                major in ("row_idx", "D") or
+                minor in ("row_idx", "D")
+            )
+            if is_dup:
+                cols_to_delete.append(col_idx)
+                
+        if cols_to_delete:
+            logger.info("Cleaning up %d duplicate/unused columns...", len(cols_to_delete))
+            for col_idx in cols_to_delete:
+                ws.delete_cols(col_idx)
+        
+        # 2. Map column names to indices
+        col_mapping = {}
+        for col_idx in range(1, ws.max_column + 1):
+            major = str(ws.cell(row=1, column=col_idx).value or "").strip()
+            minor = str(ws.cell(row=2, column=col_idx).value or "").strip()
+            
+            # Clean up suffixes like .1 from headers if any exist
+            if "." in major:
+                major = major.split(".")[0].strip()
+            if "." in minor:
+                minor = minor.split(".")[0].strip()
+                
+            if major in ["Hoạt Động CRM", "AETT", "Khách Hàng", "Kế Hoạch", "Đối Thủ Cạnh Tranh"] and minor:
+                col_name = f"[{major}] {minor}"
+            else:
+                col_name = major or minor
+            if col_name:
+                col_mapping[col_name] = col_idx
+                
+        # 3. Map ActivityId to row numbers (data starts at row 3)
+        act_id_col_idx = col_mapping.get("ActivityId")
+        if not act_id_col_idx:
+            raise ValueError("ActivityId column not found in target Excel sheet!")
+            
+        row_mapping = {}
+        for r in range(3, ws.max_row + 1):
+            act_id = config.normalize_id(ws.cell(row=r, column=act_id_col_idx).value)
+            if act_id:
+                row_mapping[act_id] = r
+                
+        # 4. Prepare source lookup for appending brand new rows
         source_df_clean = df.copy()
         source_df_clean["ActivityId_str"] = source_df_clean["ActivityId"].apply(config.normalize_id)
         source_lookup = source_df_clean.drop_duplicates(subset=["ActivityId_str"]).set_index("ActivityId_str")
         
-        # Convert history_db to DataFrame for fast vectorized merging
-        history_rows = []
-        for act_id, fills in history_db.items():
-            row_dict = {col: fills.get(col) for col in config.OUTPUT_COLUMNS}
-            row_dict["ActivityId"] = act_id
-            history_rows.append(row_dict)
-        history_df = pd.DataFrame(history_rows)
-        history_df.set_index("ActivityId", inplace=True)
-
-        # Vectorized update of existing rows in target_df
-        logger.info("Performing fast vectorized merge of history database...")
-        for col in config.OUTPUT_COLUMNS:
-            if col in target_df.columns:
-                target_series = target_df[col]
-                history_series = history_df[col]
-                
-                # Check where target is empty or 'mơ hồ'
-                is_empty_or_mo_ho = target_series.isna() | (target_series.astype(str).str.strip() == '') | (target_series.astype(str).str.strip().str.lower() == 'mơ hồ')
-                
-                # Reindex history to match target index (returns NaN for non-matching IDs)
-                aligned_history = history_series.reindex(target_df.index)
-                
-                # Identify cells that will be updated (where target is empty/mơ hồ AND history has a value)
-                will_update = is_empty_or_mo_ho & aligned_history.notna() & (aligned_history != "")
-                cells_filled_count += will_update.sum()
-                
-                # Assign values
-                target_df.loc[is_empty_or_mo_ho, col] = aligned_history[is_empty_or_mo_ho]
-
-        # Identify new rows to append (present in history but not in target, excluding empty strings)
-        history_ids = set(history_df.index) - {""}
-        target_ids = set(target_df.index) - {""}
-        new_ids = history_ids - target_ids
+        cells_filled_count = 0
+        new_rows_count = 0
         
-        new_rows_to_append = []
-        if new_ids:
-            logger.info("Preparing %d new rows to append...", len(new_ids))
-            for act_id in new_ids:
+        # 5. In-place merge and append new rows
+        logger.info("Performing in-place update and appending new rows...")
+        for act_id, fills in history_db.items():
+            if not act_id:
+                continue
+                
+            if act_id in row_mapping:
+                # Update existing row
+                row_num = row_mapping[act_id]
+                for col_name in config.OUTPUT_COLUMNS:
+                    val = fills.get(col_name)
+                    if val is not None and str(val).strip() != "":
+                        col_idx = col_mapping.get(col_name)
+                        if col_idx:
+                            cell = ws.cell(row=row_num, column=col_idx)
+                            current_val = cell.value
+                            is_empty_or_mo_ho = pd.isna(current_val) or str(current_val).strip() == '' or str(current_val).strip().lower() == 'mơ hồ'
+                            if is_empty_or_mo_ho:
+                                cell.value = val
+                                cells_filled_count += 1
+            else:
+                # Append brand new row at the end
                 if act_id in source_lookup.index:
                     src_row = source_lookup.loc[act_id]
-                    fills = history_db[act_id]
-                    new_row_dict = {}
-                    for col in target_df.columns:
-                        if col in config.OUTPUT_COLUMNS:
-                            new_row_dict[col] = fills.get(col)
-                        elif col in src_row.index:
-                            new_row_dict[col] = src_row[col]
+                    next_row = ws.max_row + 1
+                    new_rows_count += 1
+                    
+                    # Write all columns for the new row and copy styles
+                    for col_name, col_idx in col_mapping.items():
+                        if col_name in config.OUTPUT_COLUMNS:
+                            val = fills.get(col_name)
+                        elif col_name in src_row.index:
+                            val = src_row[col_name]
                         else:
-                            new_row_dict[col] = None
-                    new_row_dict["ActivityId"] = act_id
-                    new_rows_to_append.append(new_row_dict)
-
-        target_df.reset_index(inplace=True)
-        
-        if new_rows_to_append:
-            logger.info("Appending %d brand new rows to target DataFrame...", len(new_rows_to_append))
-            new_df = pd.DataFrame(new_rows_to_append)
-            target_df = pd.concat([target_df, new_df], ignore_index=True)
-            cells_filled_count += len(new_rows_to_append) * len(config.OUTPUT_COLUMNS)
-
-        # 6.2 Filter out any leftover raw double-header rows or metadata rows in target_df if they were read as data
-        if "ActivityId" in target_df.columns:
-            target_df = target_df[~target_df["ActivityId"].astype(str).str.strip().str.lower().isin(["activityid", "unnamed:", "nan", "none", ""])]
-
-        # 7. Ghi file đích cục bộ, áp dụng styles
-        target_df.to_excel(target_excel_path, index=False)
-        apply_excel_styling(target_excel_path)
+                            val = None
+                        
+                        cell = ws.cell(row=next_row, column=col_idx, value=val)
+                        
+                        # Copy style from row 3 to preserve formatting
+                        ref_cell = ws.cell(row=3, column=col_idx)
+                        cell.font = ref_cell.font
+                        cell.border = ref_cell.border
+                        cell.alignment = ref_cell.alignment
+                        cell.fill = ref_cell.fill
+                        
+                    cells_filled_count += len(config.OUTPUT_COLUMNS)
+                    
+        if new_rows_count:
+            logger.info("Appended %d brand new rows to Excel sheet.", new_rows_count)
+            
+        # Save workbook locally
+        wb.save(target_excel_path)
+        logger.info("[OK] Excel updated locally in-place.")
         
         # 8. Upload file đích ngược lại SharePoint Target site
         sp_client.upload_file(
