@@ -398,7 +398,31 @@ def run_automation_pipeline() -> bool:
                 target_excel_path, 
                 drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
             )
-            target_df = pd.read_excel(target_excel_path)
+            
+            # Read as double-header MultiIndex
+            df_raw = pd.read_excel(target_excel_path, header=[0, 1])
+            
+            # Flatten columns to [Group] Sub format
+            flat_cols = []
+            classification_groups = ["Hoạt Động CRM", "AETT", "Khách Hàng", "Kế Hoạch", "Đối Thủ Cạnh Tranh"]
+            for col in df_raw.columns:
+                major = str(col[0]).strip()
+                minor = str(col[1]).strip()
+                
+                if major.startswith("Unnamed:") or major.lower() in ("nan", "none", ""):
+                    major = ""
+                if minor.startswith("Unnamed:") or minor.lower() in ("nan", "none", ""):
+                    minor = ""
+                    
+                if major in classification_groups and minor:
+                    flat_cols.append(f"[{major}] {minor}")
+                else:
+                    col_name = major or minor
+                    flat_cols.append(col_name)
+                    
+            target_df = df_raw.copy()
+            target_df.columns = flat_cols
+            logger.info("Flattened target columns from double-header: %s", list(target_df.columns))
         else:
             logger.info("Target file does not exist on SharePoint. Initializing from source schema...")
             target_df = df.copy()
@@ -425,6 +449,10 @@ def run_automation_pipeline() -> bool:
                         target_df.at[act_id, col] = None
 
         target_df.reset_index(inplace=True)
+        
+        # 6.2 Filter out any leftover raw double-header rows or metadata rows in target_df if they were read as data
+        if "ActivityId" in target_df.columns:
+            target_df = target_df[~target_df["ActivityId"].astype(str).str.strip().str.lower().isin(["activityid", "unnamed:", "nan", "none", ""])]
 
         # 7. Ghi file đích cục bộ, áp dụng styles
         target_df.to_excel(target_excel_path, index=False)
