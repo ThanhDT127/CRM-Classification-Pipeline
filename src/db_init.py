@@ -86,8 +86,8 @@ def initialize():
             
         count = 0
         for idx, row in df.iterrows():
-            act_id = str(row.get(activity_id_col, "")).strip()
-            if not act_id or act_id.lower() in ("nan", "none", ""):
+            act_id = config.normalize_id(row.get(activity_id_col))
+            if not act_id:
                 continue
                 
             row_fills = {}
@@ -123,8 +123,8 @@ def initialize():
 
         count = 0
         for idx, row in df.iterrows():
-            act_id = str(row.get("ActivityId", "")).strip()
-            if not act_id or act_id.lower() in ("nan", "none", ""):
+            act_id = config.normalize_id(row.get("ActivityId"))
+            if not act_id:
                 continue
                 
             row_fills = {}

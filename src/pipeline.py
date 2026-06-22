@@ -3,6 +3,8 @@ import sys
 import json
 import time
 import shutil
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import datetime
 import traceback
 import logging
@@ -207,7 +209,14 @@ def apply_excel_styling(file_path: Path):
             for line in lines:
                 if len(line) > max_len:
                     max_len = len(line)
-        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+        
+        # Check if this column is a classification output column
+        header_val = str(ws.cell(row=2, column=col_idx).value or "")
+        is_classification = any(header_val == c.split("] ")[-1] for c in config.OUTPUT_COLUMNS)
+        if is_classification:
+            ws.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 30)
+        else:
+            ws.column_dimensions[col_letter].width = min(max(max_len + 2, 8), 20)
 
     wb.save(file_path)
     logger.info("[OK] Excel styling successfully applied.")
@@ -259,7 +268,12 @@ def run_automation_pipeline() -> bool:
         if config.DB_JSON_PATH.exists():
             try:
                 with open(config.DB_JSON_PATH, "r", encoding="utf-8") as f:
-                    history_db = json.load(f)
+                    raw_db = json.load(f)
+                # Normalize keys on the fly
+                for k, v in raw_db.items():
+                    k_norm = config.normalize_id(k)
+                    if k_norm:
+                        history_db[k_norm] = v
                 logger.info("Loaded history DB: %d items", len(history_db))
             except Exception as e:
                 logger.warning("Failed to load history DB JSON: %s. Starting fresh.", e)
@@ -272,8 +286,8 @@ def run_automation_pipeline() -> bool:
 
         pending_rows = []
         for idx, row in df.iterrows():
-            act_id = str(row["ActivityId"]).strip()
-            if not act_id or act_id.lower() in ("nan", "none", ""):
+            act_id = config.normalize_id(row["ActivityId"])
+            if not act_id:
                 continue
             if act_id not in history_db:
                 pending_rows.append({
@@ -433,23 +447,75 @@ def run_automation_pipeline() -> bool:
                 target_df[col] = None
             target_df[col] = target_df[col].astype(object)
 
+        # Convert ActivityId column to normalized strings before setting as index
+        target_df["ActivityId"] = target_df["ActivityId"].apply(config.normalize_id)
         target_df.set_index("ActivityId", inplace=True)
         
+        # Build a lookup of source rows by ActivityId for appending new rows
+        source_df_clean = df.copy()
+        source_df_clean["ActivityId_str"] = source_df_clean["ActivityId"].apply(config.normalize_id)
+        source_lookup = source_df_clean.drop_duplicates(subset=["ActivityId_str"]).set_index("ActivityId_str")
+        
+        # Convert history_db to DataFrame for fast vectorized merging
+        history_rows = []
         for act_id, fills in history_db.items():
-            if act_id in target_df.index:
-                for col in config.OUTPUT_COLUMNS:
-                    val = fills.get(col)
-                    current_val = target_df.at[act_id, col]
-                    is_empty_or_mo_ho = pd.isna(current_val) or str(current_val).strip() == '' or str(current_val).strip().lower() == 'mơ hồ'
-                    
-                    if is_empty_or_mo_ho and val is not None:
-                        target_df.at[act_id, col] = val
-                        cells_filled_count += 1
-                    elif is_empty_or_mo_ho and val is None:
-                        target_df.at[act_id, col] = None
+            row_dict = {col: fills.get(col) for col in config.OUTPUT_COLUMNS}
+            row_dict["ActivityId"] = act_id
+            history_rows.append(row_dict)
+        history_df = pd.DataFrame(history_rows)
+        history_df.set_index("ActivityId", inplace=True)
+
+        # Vectorized update of existing rows in target_df
+        logger.info("Performing fast vectorized merge of history database...")
+        for col in config.OUTPUT_COLUMNS:
+            if col in target_df.columns:
+                target_series = target_df[col]
+                history_series = history_df[col]
+                
+                # Check where target is empty or 'mơ hồ'
+                is_empty_or_mo_ho = target_series.isna() | (target_series.astype(str).str.strip() == '') | (target_series.astype(str).str.strip().str.lower() == 'mơ hồ')
+                
+                # Reindex history to match target index (returns NaN for non-matching IDs)
+                aligned_history = history_series.reindex(target_df.index)
+                
+                # Identify cells that will be updated (where target is empty/mơ hồ AND history has a value)
+                will_update = is_empty_or_mo_ho & aligned_history.notna() & (aligned_history != "")
+                cells_filled_count += will_update.sum()
+                
+                # Assign values
+                target_df.loc[is_empty_or_mo_ho, col] = aligned_history[is_empty_or_mo_ho]
+
+        # Identify new rows to append (present in history but not in target, excluding empty strings)
+        history_ids = set(history_df.index) - {""}
+        target_ids = set(target_df.index) - {""}
+        new_ids = history_ids - target_ids
+        
+        new_rows_to_append = []
+        if new_ids:
+            logger.info("Preparing %d new rows to append...", len(new_ids))
+            for act_id in new_ids:
+                if act_id in source_lookup.index:
+                    src_row = source_lookup.loc[act_id]
+                    fills = history_db[act_id]
+                    new_row_dict = {}
+                    for col in target_df.columns:
+                        if col in config.OUTPUT_COLUMNS:
+                            new_row_dict[col] = fills.get(col)
+                        elif col in src_row.index:
+                            new_row_dict[col] = src_row[col]
+                        else:
+                            new_row_dict[col] = None
+                    new_row_dict["ActivityId"] = act_id
+                    new_rows_to_append.append(new_row_dict)
 
         target_df.reset_index(inplace=True)
         
+        if new_rows_to_append:
+            logger.info("Appending %d brand new rows to target DataFrame...", len(new_rows_to_append))
+            new_df = pd.DataFrame(new_rows_to_append)
+            target_df = pd.concat([target_df, new_df], ignore_index=True)
+            cells_filled_count += len(new_rows_to_append) * len(config.OUTPUT_COLUMNS)
+
         # 6.2 Filter out any leftover raw double-header rows or metadata rows in target_df if they were read as data
         if "ActivityId" in target_df.columns:
             target_df = target_df[~target_df["ActivityId"].astype(str).str.strip().str.lower().isin(["activityid", "unnamed:", "nan", "none", ""])]

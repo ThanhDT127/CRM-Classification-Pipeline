@@ -93,20 +93,58 @@ class SharePointClient:
         return response.status_code == 200
 
     def upload_file(self, local_path: Path, remote_file_path: str, drive_id: str = "") -> dict:
-        """Upload file to SharePoint overwriting the file at remote_file_path."""
-        logger.info("Uploading file to SharePoint: %s -> %s ...", local_path.name, remote_file_path)
+        """Upload file to SharePoint. Uses chunked upload session for files > 4MB."""
+        file_size = local_path.stat().st_size
+        logger.info("Uploading file to SharePoint: %s -> %s (%d bytes) ...", local_path.name, remote_file_path, file_size)
         if not local_path.exists():
             raise FileNotFoundError(f"Local file not found to upload: {local_path}")
             
         escaped_path = "/".join(quote(p) for p in remote_file_path.split("/"))
-        url = self._url(f"root:/{escaped_path}:/content", drive_id=drive_id)
         
-        # Binary put request: headers must exclude Content-Type JSON
-        headers = {k: v for k, v in self.auth.get_headers().items() if k != "Content-Type"}
+        # Simple PUT for files <= 4MB
+        if file_size <= 4 * 1024 * 1024:
+            url = self._url(f"root:/{escaped_path}:/content", drive_id=drive_id)
+            headers = {k: v for k, v in self.auth.get_headers().items() if k != "Content-Type"}
+            with open(local_path, "rb") as f:
+                response = self.session.put(url, headers=headers, data=f)
+            response.raise_for_status()
+            logger.info("[OK] Simple upload complete: %s", remote_file_path)
+            return response.json()
+            
+        # Chunked upload session for files > 4MB
+        logger.info("File size > 4MB. Creating chunked upload session...")
+        create_session_url = self._url(f"root:/{escaped_path}:/createUploadSession", drive_id=drive_id)
+        
+        session_response = self.session.post(create_session_url, headers=self.auth.get_headers(), json={})
+        session_response.raise_for_status()
+        
+        upload_url = session_response.json().get("uploadUrl")
+        if not upload_url:
+            raise ValueError("Failed to obtain uploadUrl from createUploadSession.")
+            
+        # Chunk size must be a multiple of 320 KB (327680 bytes)
+        # We use 320 KB * 10 = 3,276,800 bytes (~3.1 MB) chunks
+        chunk_size = 3276800
         
         with open(local_path, "rb") as f:
-            response = self.session.put(url, headers=headers, data=f)
-            
-        response.raise_for_status()
-        logger.info("[OK] Upload complete: %s", remote_file_path)
+            start = 0
+            while start < file_size:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                chunk_len = len(chunk)
+                end = start + chunk_len - 1
+                
+                headers = {
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Content-Length": str(chunk_len)
+                }
+                
+                response = self.session.put(upload_url, headers=headers, data=chunk)
+                response.raise_for_status()
+                
+                start += chunk_len
+                logger.info("  Uploaded chunk %d-%d / %d bytes", start - chunk_len, end, file_size)
+                
+        logger.info("[OK] Chunked upload complete: %s", remote_file_path)
         return response.json()

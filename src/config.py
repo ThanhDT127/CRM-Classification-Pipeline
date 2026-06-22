@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import pandas as pd
 
 # --- Container Paths ---
 PROJECT_ROOT = Path(__file__).resolve().parent.parent  # /app
@@ -91,3 +92,13 @@ OUTPUT_COLUMNS = [
 ]
 
 LLM_TARGET_COLS = [c for c in OUTPUT_COLUMNS if c != COL_CURRENT_STATUS]
+
+def normalize_id(val) -> str:
+    if pd.isna(val):
+        return ""
+    val_str = str(val).strip()
+    if val_str.endswith(".0"):
+        val_str = val_str[:-2]
+    if val_str.lower() in ("nan", "none", ""):
+        return ""
+    return val_str
