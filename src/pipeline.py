@@ -451,6 +451,34 @@ def run_automation_pipeline() -> bool:
                 
         return False
 
+def get_seconds_until_next_run(target_hour=3, target_minute=30) -> float:
+    now = datetime.datetime.now()
+    target_today = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+    
+    if now < target_today:
+        diff = target_today - now
+    else:
+        target_tomorrow = target_today + datetime.timedelta(days=1)
+        diff = target_tomorrow - now
+        
+    return diff.total_seconds()
+
 if __name__ == "__main__":
-    success = run_automation_pipeline()
-    sys.exit(0 if success else 1)
+    run_as_daemon = os.getenv("RUN_AS_DAEMON", "false").lower() == "true"
+    
+    if not run_as_daemon:
+        success = run_automation_pipeline()
+        sys.exit(0 if success else 1)
+    else:
+        logger.info("Starting pipeline in Daemon Mode (RUN_AS_DAEMON=True)...")
+        # Run immediately on startup
+        run_automation_pipeline()
+        
+        while True:
+            sec = get_seconds_until_next_run(3, 30)
+            hours = sec / 3600.0
+            logger.info("Daemon Mode: Sleeping for %.2f hours until next run at 03:30 AM...", hours)
+            time.sleep(sec)
+            
+            logger.info("Daemon Mode: Waking up to run scheduled pipeline...")
+            run_automation_pipeline()
