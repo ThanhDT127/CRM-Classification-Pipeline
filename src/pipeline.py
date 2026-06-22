@@ -333,16 +333,32 @@ def run_automation_pipeline() -> bool:
                 batch_size = config.BATCH_SIZE
                 llm_results = {}
                 total_items = len(llm_input_payload)
-                for i in range(0, total_items, batch_size):
-                    batch = llm_input_payload[i:i + batch_size]
-                    batch_num = (i // batch_size) + 1
-                    total_batches = (total_items + batch_size - 1) // batch_size
-                    logger.info("Processing LLM batch %d/%d (items %d-%d of %d)...", 
-                                batch_num, total_batches, i + 1, min(i + batch_size, total_items), total_items)
+                
+                batches = [llm_input_payload[i:i + batch_size] for i in range(0, total_items, batch_size)]
+                total_batches = len(batches)
+                
+                workers = int(os.getenv("GEMINI_CONCURRENT_WORKERS") or "3")
+                logger.info("Processing %d batches concurrently using %d workers...", total_batches, workers)
+                
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                import threading
+                
+                lock = threading.Lock()
+                
+                def worker_task(batch_idx, batch):
+                    batch_num = batch_idx + 1
+                    logger.info("Worker calling Gemini API for batch %d/%d (%d items)...", batch_num, total_batches, len(batch))
                     res = call_llm_batch(client, model_name, system_prompt, batch)
-                    for item in res:
-                        rid = str(item.get("row_idx"))
-                        llm_results[rid] = item.get("fills") or {}
+                    with lock:
+                        for item in res:
+                            rid = str(item.get("row_idx"))
+                            llm_results[rid] = item.get("fills") or {}
+                    logger.info("Worker finished processing batch %d/%d.", batch_num, total_batches)
+                            
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = [executor.submit(worker_task, idx, b) for idx, b in enumerate(batches)]
+                    for future in as_completed(futures):
+                        future.result()
                 
                 # Merge LLM fills back into regex records
                 for act_id, fills in new_fills.items():

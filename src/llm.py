@@ -30,7 +30,7 @@ def init_llm_client() -> tuple[genai.Client, str]:
             project=project_id,
             location=os.getenv("VERTEX_LOCATION", "us-central1")
         )
-        client._api_client._httpx_client.timeout = httpx.Timeout(120.0)
+        client._api_client._httpx_client.timeout = httpx.Timeout(300.0)
         model_name = config.MODEL_NAME
         if model_name.startswith("models/"):
             model_name = model_name[len("models/"):]
@@ -40,25 +40,29 @@ def init_llm_client() -> tuple[genai.Client, str]:
         if not api_key:
             raise ValueError("No GEMINI_API_KEY environment variable found!")
         client = genai.Client(api_key=api_key)
-        client._api_client._httpx_client.timeout = httpx.Timeout(120.0)
+        client._api_client._httpx_client.timeout = httpx.Timeout(300.0)
         model_name = config.MODEL_NAME
         if not model_name.startswith("models/"):
             model_name = f"models/{model_name}"
             
     return client, model_name
 
+import threading
+
 # Rate limiting control
 _last_call_time = 0.0
+_rate_limit_lock = threading.Lock()
 
 def wait_for_rate_limit():
     global _last_call_time
-    now = time.time()
-    elapsed = now - _last_call_time
-    # Add rate limiting to serialization to prevent 429
-    interval = config.MIN_INTERVAL_S + random.random() * config.JITTER_S
-    if elapsed < interval:
-        time.sleep(interval - elapsed)
-    _last_call_time = time.time()
+    with _rate_limit_lock:
+        now = time.time()
+        elapsed = now - _last_call_time
+        # Add rate limiting to serialization to prevent 429
+        interval = config.MIN_INTERVAL_S + random.random() * config.JITTER_S
+        if elapsed < interval:
+            time.sleep(interval - elapsed)
+        _last_call_time = time.time()
 
 def _parse_llm_json(text: str) -> List[Dict[str, Any]]:
     # Extract JSON Array from prompt output
