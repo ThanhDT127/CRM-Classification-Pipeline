@@ -158,10 +158,15 @@ Việc cấu hình `.dockerignore` giúp quá trình build container cực nhẹ
 docker compose up --build
 ```
 
-### Cấu hình Cron Job trên máy ảo
-Để hệ thống tự động chạy vào lúc 3h30 sáng hàng ngày:
+### Chạy ngầm tự động (Daemon Mode)
+Hệ thống được thiết kế để tự động chạy như một background service vĩnh viễn. Khi khởi chạy qua Docker, container tự động kích hoạt chế độ Daemon (`RUN_AS_DAEMON=true`):
+* **Chạy ngay lập tức:** Thực hiện quét và phân loại file trên SharePoint ngay khi khởi động container lần đầu.
+* **Tự động lập lịch:** Tự động tính toán thời gian, đi vào trạng thái ngủ đông (`sleep`) và thức dậy để chạy quét delta lúc **03:30 AM** hàng ngày.
+* **Tự phục hồi:** Cấu hình `restart: unless-stopped` giúp container tự động khởi động lại cùng hệ điều hành nếu máy ảo bị restart.
+
+Để khởi chạy container chạy ngầm dưới nền:
 ```bash
-30 3 * * * cd /path/to/CRM-Classification-Pipeline && docker compose up --build >> /var/log/crm_automation.log 2>&1
+docker compose up -d --build
 ```
 
 ---
