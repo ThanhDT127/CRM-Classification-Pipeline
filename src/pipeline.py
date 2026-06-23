@@ -430,26 +430,7 @@ def run_automation_pipeline() -> bool:
         wb = openpyxl.load_workbook(target_excel_path)
         ws = wb.active
         
-        # 1. Clean up duplicate columns if any exist (from right to left to avoid index shift)
-        cols_to_delete = []
-        for col_idx in range(ws.max_column, 0, -1):
-            major = str(ws.cell(row=1, column=col_idx).value or "").strip()
-            minor = str(ws.cell(row=2, column=col_idx).value or "").strip()
-            is_dup = (
-                any(major.endswith(f".{i}") for i in range(1, 100)) or
-                any(minor.endswith(f".{i}") for i in range(1, 100)) or
-                major in ("row_idx", "D") or
-                minor in ("row_idx", "D")
-            )
-            if is_dup:
-                cols_to_delete.append(col_idx)
-                
-        if cols_to_delete:
-            logger.info("Cleaning up %d duplicate/unused columns...", len(cols_to_delete))
-            for col_idx in cols_to_delete:
-                ws.delete_cols(col_idx)
-        
-        # 2. Map column names to indices
+        # 1. Map column names to indices
         col_mapping = {}
         for col_idx in range(1, ws.max_column + 1):
             major = str(ws.cell(row=1, column=col_idx).value or "").strip()
