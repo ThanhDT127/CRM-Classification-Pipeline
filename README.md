@@ -1,25 +1,15 @@
 # ⚡ CRM Classification Pipeline ⚡
 
 <p align="center">
-  <a href="#readme"><img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=16,2&height=220&section=header&text=CRM%20Classification&fontSize=55&fontColor=ffffff&animation=fadeIn" alt="Header Banner" /></a>
+  <a href="#readme"><img src="https://capsule-render.vercel.app/api?type=waving&color=0:7F00FF,100:00E0FF&height=220&section=header&text=CRM%20Classification&fontSize=55&fontColor=ffffff&animation=fadeIn" alt="Header Banner" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/ThanhDT127/CRM-Classification-Pipeline/actions/workflows/ci.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/ThanhDT127/CRM-Classification-Pipeline/ci.yml?branch=main&style=flat-square&logo=github&logoColor=white&label=Build" alt="Build Status" />
-  </a>
-  <a href="#readme">
-    <img src="https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?style=flat-square&logo=python&logoColor=white" alt="Python Version" />
-  </a>
-  <a href="#readme">
-    <img src="https://img.shields.io/badge/Docker-Enabled-blue?style=flat-square&logo=docker&logoColor=white" alt="Docker Support" />
-  </a>
-  <a href="#readme">
-    <img src="https://img.shields.io/badge/Tests-PyTest-green?style=flat-square&logo=pytest&logoColor=white" alt="Tests Status" />
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="License" />
-  </a>
+  <a href="https://github.com/ThanhDT127/CRM-Classification-Pipeline/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ThanhDT127/CRM-Classification-Pipeline/ci.yml?branch=main&style=flat-square&logo=github&logoColor=white&label=Build" alt="Build Status" /></a>
+  <a href="#readme"><img src="https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?style=flat-square&logo=python&logoColor=white" alt="Python Version" /></a>
+  <a href="#readme"><img src="https://img.shields.io/badge/Docker-Enabled-blue?style=flat-square&logo=docker&logoColor=white" alt="Docker Support" /></a>
+  <a href="#readme"><img src="https://img.shields.io/badge/Tests-PyTest-green?style=flat-square&logo=pytest&logoColor=white" alt="Tests Status" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="License" /></a>
 </p>
 
 <p align="center">
