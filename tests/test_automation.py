@@ -171,3 +171,111 @@ def test_full_pipeline_run(mock_call_llm, mock_init_llm, mock_notifier_cls, mock
             history = json.load(f)
             assert "ACT_001" in history
             assert history["ACT_001"][config.COL_CURRENT_STATUS] == "Khách hàng muốn mua bóng đèn LED"
+
+@patch("pipeline.AuthProvider")
+@patch("pipeline.SharePointClient")
+@patch("pipeline.NotificationService")
+@patch("pipeline.init_llm_client")
+@patch("pipeline.call_llm_batch")
+def test_consecutive_pipeline_runs(mock_call_llm, mock_init_llm, mock_notifier_cls, mock_sp_cls, mock_auth_cls):
+    mock_auth_inst = MagicMock()
+    mock_auth_cls.return_value = mock_auth_inst
+    
+    mock_sp_inst = MagicMock()
+    mock_sp_cls.return_value = mock_sp_inst
+    
+    mock_notifier_inst = MagicMock()
+    mock_notifier_cls.return_value = mock_notifier_inst
+    
+    mock_llm_client = MagicMock()
+    mock_init_llm.return_value = (mock_llm_client, "gemini-2.5-flash")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        
+        # Override config paths for testing
+        config.PATH_OUTPUT = tmp_path / "output"
+        config.PATH_OUTPUT.mkdir(parents=True, exist_ok=True)
+        config.PATH_INPUT = tmp_path / "CRM_merge.xlsx"
+        config.PATH_BACKUP_DIR = tmp_path / "backups"
+        config.DB_JSON_PATH = config.PATH_OUTPUT / "classified_history_db.json"
+        config.CKPT_JSON = config.PATH_OUTPUT / "llm_fills_checkpoint.json"
+        
+        # Create a mock Excel sheet that needs classification
+        df = pd.DataFrame([
+            {
+                "ActivityId": "ACT_001",
+                "Tình trạng hiện tại": "Khách hàng muốn mua bóng đèn LED",
+                "Tình hình tiến độ công trình": "Đang hoàn thiện phần thô",
+                "Nội dung làm việc, yêu cầu KH & đánh giá": "Tư vấn giá và mẫu mã cho anh Thanh",
+                "Kế hoạch lần tới": "Gửi báo giá bóng đèn",
+                "Đề xuất": "Giảm giá 5%"
+            }
+        ])
+        df.to_excel(config.PATH_INPUT, index=False)
+        
+        # Mock SharePoint storage
+        mock_sharepoint_files = {}
+        
+        def side_effect_download(remote_path, local_path, *args, **kwargs):
+            if remote_path in mock_sharepoint_files:
+                with open(local_path, "wb") as f:
+                    f.write(mock_sharepoint_files[remote_path])
+            else:
+                df.to_excel(local_path, index=False)
+            return local_path
+            
+        def side_effect_upload(local_path, remote_path, *args, **kwargs):
+            with open(local_path, "rb") as f:
+                mock_sharepoint_files[remote_path] = f.read()
+            return {"id": "mock_id"}
+            
+        def side_effect_exists(remote_path, *args, **kwargs):
+            return remote_path in mock_sharepoint_files
+            
+        mock_sp_inst.download_file.side_effect = side_effect_download
+        mock_sp_inst.upload_file.side_effect = side_effect_upload
+        mock_sp_inst.check_file_exists.side_effect = side_effect_exists
+        
+        # Mock LLM API response
+        mock_call_llm.return_value = [
+            {
+                "row_idx": "ACT_001",
+                "fills": {
+                    config.COL_WORK_CRM: "Bóng LED",
+                    config.COL_OPINION: "Muốn mua bóng đèn LED",
+                    config.COL_PLAN_NEXT: "Gửi báo giá bóng",
+                    config.COL_PROPOSAL: "Giảm giá 5%"
+                }
+            }
+        ]
+        
+        # --- RUN 1 (Classification + Append) ---
+        success1 = main.run_automation_pipeline()
+        assert success1 is True
+        
+        # Verify first run updated history and uploaded file
+        assert config.DB_JSON_PATH.exists()
+        assert config.SHAREPOINT_TARGET_FILE_PATH in mock_sharepoint_files
+        
+        # Reset mock call histories for Run 2
+        mock_sp_inst.download_file.reset_mock()
+        mock_sp_inst.upload_file.reset_mock()
+        mock_notifier_inst.send_success.reset_mock()
+        mock_call_llm.reset_mock()
+        
+        # --- RUN 2 (Delta = 0, direct in-place check, no LLM call) ---
+        # Re-create input file since pipeline deletes it on finish
+        df.to_excel(config.PATH_INPUT, index=False)
+        
+        success2 = main.run_automation_pipeline()
+        assert success2 is True
+        
+        # Assertions for Run 2:
+        # 1. download_file should be called 2 times (download source and download target from SharePoint)
+        assert mock_sp_inst.download_file.call_count == 2
+        # 2. upload_file should be called 1 time (upload final updated target file)
+        assert mock_sp_inst.upload_file.call_count == 1
+        # 3. Gemini LLM should NOT be called since delta is 0
+        mock_call_llm.assert_not_called()
+
