@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import shutil
+from copy import copy
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import datetime
@@ -526,10 +527,10 @@ def run_automation_pipeline() -> bool:
                         
                         # Copy style from row 3 to preserve formatting
                         ref_cell = ws.cell(row=3, column=col_idx)
-                        cell.font = ref_cell.font
-                        cell.border = ref_cell.border
-                        cell.alignment = ref_cell.alignment
-                        cell.fill = ref_cell.fill
+                        cell.font = copy(ref_cell.font)
+                        cell.border = copy(ref_cell.border)
+                        cell.alignment = copy(ref_cell.alignment)
+                        cell.fill = copy(ref_cell.fill)
                         
                     cells_filled_count += len(config.OUTPUT_COLUMNS)
                     

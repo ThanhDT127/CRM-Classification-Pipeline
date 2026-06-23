@@ -157,8 +157,8 @@ def test_full_pipeline_run(mock_call_llm, mock_init_llm, mock_notifier_cls, mock
         
         # Assertions
         assert success is True
-        mock_sp_inst.download_file.assert_called_once()
-        mock_sp_inst.upload_file.assert_called_once()
+        assert mock_sp_inst.download_file.call_count == 2
+        assert mock_sp_inst.upload_file.call_count == 2
         mock_notifier_inst.send_success.assert_called_once()
         
         # Check that backup was created
