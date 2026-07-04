@@ -367,7 +367,27 @@ def run_automation_pipeline() -> bool:
                     with lock:
                         for item in res:
                             rid = str(item.get("row_idx"))
-                            llm_results[rid] = item.get("fills") or {}
+                            llm_fills = item.get("fills") or {}
+                            llm_results[rid] = llm_fills
+                            
+                            # Merge back into new_fills in-place
+                            if rid in new_fills:
+                                fills = new_fills[rid]
+                                for col, val in llm_fills.items():
+                                    if col in config.LLM_TARGET_COLS:
+                                        if val is None or str(val).strip() == "":
+                                            fills[col] = None
+                                        else:
+                                            fills[col] = str(val).strip()
+                                history_db[rid] = fills
+                                
+                        # Save checkpoint incrementally
+                        try:
+                            with open(config.DB_JSON_PATH, "w", encoding="utf-8") as f:
+                                json.dump(history_db, f, ensure_ascii=False, indent=2)
+                        except Exception as save_err:
+                            logger.warning("Failed to save history DB checkpoint: %s", save_err)
+                            
                     logger.info("Worker finished processing batch %d/%d.", batch_num, total_batches)
                             
                 with ThreadPoolExecutor(max_workers=workers) as executor:

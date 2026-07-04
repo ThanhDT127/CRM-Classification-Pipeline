@@ -71,9 +71,24 @@ def _parse_llm_json(text: str) -> List[Dict[str, Any]]:
     if start != -1 and end != -1 and end > start:
         try:
             return json.loads(text[start:end + 1])
-        except json.JSONDecodeError:
-            pass
-    raise ValueError(f"Could not parse valid JSON array from LLM response: {text[:200]}")
+        except json.JSONDecodeError as jde:
+            try:
+                log_path = config.PATH_OUTPUT / "logs" / "failed_llm_response.txt"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write(text)
+            except Exception:
+                pass
+            raise ValueError(f"JSONDecodeError: {jde}. Raw response saved to logs/failed_llm_response.txt. Sample: {text[:200]}")
+            
+    try:
+        log_path = config.PATH_OUTPUT / "logs" / "failed_llm_response.txt"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(text)
+    except Exception:
+        pass
+    raise ValueError(f"Could not parse valid JSON array from LLM response (saved to logs/failed_llm_response.txt). Sample: {text[:200]}")
 
 def call_llm_batch(
     client: genai.Client,
@@ -95,7 +110,8 @@ def call_llm_batch(
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     temperature=0.0,
-                    max_output_tokens=32000,
+                    max_output_tokens=8192,
+                    response_mime_type="application/json",
                 )
             )
             raw = getattr(resp, "text", "") or ""

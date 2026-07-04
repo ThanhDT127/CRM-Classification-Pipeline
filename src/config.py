@@ -29,7 +29,7 @@ API_KEY = os.getenv("GEMINI_API_KEY") or ""
 MODEL_NAME = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
 MIN_INTERVAL_S = float(os.getenv("GEMINI_MIN_INTERVAL_S") or "3.5")
 JITTER_S = float(os.getenv("GEMINI_JITTER_S") or "0.5")
-BATCH_SIZE = min(20, int(os.getenv("GEMINI_BATCH_SIZE") or "20"))
+BATCH_SIZE = min(25, int(os.getenv("GEMINI_BATCH_SIZE") or "25"))
 
 # Azure AD Configuration
 AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID") or ""
