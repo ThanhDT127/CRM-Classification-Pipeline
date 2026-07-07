@@ -727,15 +727,23 @@ def run_automation_pipeline() -> bool:
                 row_num = row_mapping[act_id]
                 for col_name in config.OUTPUT_COLUMNS:
                     val = fills.get(col_name)
-                    if val is not None and str(val).strip() != "":
-                        col_idx = col_mapping.get(col_name)
-                        if col_idx:
-                            cell = ws.cell(row=row_num, column=col_idx)
-                            current_val = cell.value
-                            is_empty_or_mo_ho = pd.isna(current_val) or str(current_val).strip() == '' or str(current_val).strip().lower() == 'mơ hồ'
-                            if is_empty_or_mo_ho:
+                    col_idx = col_mapping.get(col_name)
+                    if col_idx:
+                        cell = ws.cell(row=row_num, column=col_idx)
+                        current_val = cell.value
+                        
+                        val_clean = str(val).strip() if val is not None else ""
+                        curr_clean = str(current_val).strip().lower() if current_val is not None else ""
+                        
+                        # 1. If we have a valid classification value, write it to empty/mơ hồ cells
+                        if val_clean != "" and val_clean.lower() != "mơ hồ":
+                            if curr_clean in ("", "mơ hồ", "none", "nan"):
                                 cell.value = val
                                 cells_filled_count += 1
+                        # 2. If classified as empty/null, explicitly clear any pre-existing "mơ hồ" placeholder
+                        elif curr_clean == "mơ hồ":
+                            cell.value = None
+                            cells_filled_count += 1
             else:
                 # Append brand new row at the end
                 if act_id in source_lookup.index:
