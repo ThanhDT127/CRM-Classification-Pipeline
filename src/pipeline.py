@@ -258,6 +258,35 @@ def calculate_row_hash(r) -> str:
     raw_str = "|".join(parts)
     return hashlib.md5(raw_str.encode("utf-8")).hexdigest()
 
+def map_excel_columns(ws) -> dict:
+    # Map column names to indices, handling merged headers in row 1
+    col_mapping = {}
+    for col_idx in range(1, ws.max_column + 1):
+        major = str(ws.cell(row=1, column=col_idx).value or "").strip()
+        minor = str(ws.cell(row=2, column=col_idx).value or "").strip()
+        
+        # Clean up suffixes like .1 from headers if any exist
+        if "." in major:
+            major = major.split(".")[0].strip()
+        if "." in minor:
+            minor = minor.split(".")[0].strip()
+            
+        # Merged cells check: If major is empty, scan left to find the merged header
+        if not major and col_idx > 1:
+            for left_idx in range(col_idx - 1, 0, -1):
+                left_val = str(ws.cell(row=1, column=left_idx).value or "").strip()
+                if left_val in ["Hoạt Động CRM", "AETT", "Khách Hàng", "Kế Hoạch", "Đối Thủ Cạnh Tranh"]:
+                    major = left_val
+                    break
+        
+        if major in ["Hoạt Động CRM", "AETT", "Khách Hàng", "Kế Hoạch", "Đối Thủ Cạnh Tranh"] and minor:
+            col_name = f"[{major}] {minor}"
+        else:
+            col_name = major or minor
+        if col_name:
+            col_mapping[col_name] = col_idx
+    return col_mapping
+
 def run_automation_pipeline() -> bool:
     logger.info("============================================================")
     logger.info("CRM Automated Pipeline Run Started")
@@ -353,22 +382,8 @@ def run_automation_pipeline() -> bool:
                         wb = openpyxl.load_workbook(target_excel_path, data_only=True)
                         ws = wb.active
                         
-                        # Map columns
-                        col_mapping = {}
-                        for col_idx in range(1, ws.max_column + 1):
-                            major = str(ws.cell(row=1, column=col_idx).value or "").strip()
-                            minor = str(ws.cell(row=2, column=col_idx).value or "").strip()
-                            if "." in major:
-                                major = major.split(".")[0].strip()
-                            if "." in minor:
-                                minor = minor.split(".")[0].strip()
-                            
-                            if major in ["Hoạt Động CRM", "AETT", "Khách Hàng", "Kế Hoạch", "Đối Thủ Cạnh Tranh"] and minor:
-                                col_name = f"[{major}] {minor}"
-                            else:
-                                col_name = major or minor
-                            if col_name:
-                                col_mapping[col_name] = col_idx
+                        # Map columns using the global helper
+                        col_mapping = map_excel_columns(ws)
                                 
                         act_id_col_idx = col_mapping.get("ActivityId")
                         if act_id_col_idx:
@@ -665,24 +680,8 @@ def run_automation_pipeline() -> bool:
         wb = openpyxl.load_workbook(target_excel_path)
         ws = wb.active
         
-        # 1. Map column names to indices
-        col_mapping = {}
-        for col_idx in range(1, ws.max_column + 1):
-            major = str(ws.cell(row=1, column=col_idx).value or "").strip()
-            minor = str(ws.cell(row=2, column=col_idx).value or "").strip()
-            
-            # Clean up suffixes like .1 from headers if any exist
-            if "." in major:
-                major = major.split(".")[0].strip()
-            if "." in minor:
-                minor = minor.split(".")[0].strip()
-                
-            if major in ["Hoạt Động CRM", "AETT", "Khách Hàng", "Kế Hoạch", "Đối Thủ Cạnh Tranh"] and minor:
-                col_name = f"[{major}] {minor}"
-            else:
-                col_name = major or minor
-            if col_name:
-                col_mapping[col_name] = col_idx
+        # 1. Map column names to indices using the global helper
+        col_mapping = map_excel_columns(ws)
                 
         # 3. Map ActivityId to row numbers (data starts at row 3)
         act_id_col_idx = col_mapping.get("ActivityId")
