@@ -223,6 +223,26 @@ def apply_excel_styling(file_path: Path):
     wb.save(file_path)
     logger.info("[OK] Excel styling successfully applied.")
 
+def save_history_db_atomic(history_db: dict):
+    import tempfile
+    import os
+    file_path = config.DB_JSON_PATH
+    dir_name = file_path.parent
+    dir_name.mkdir(parents=True, exist_ok=True)
+    temp_name = None
+    try:
+        with tempfile.NamedTemporaryFile('w', dir=dir_name, delete=False, encoding='utf-8') as tf:
+            temp_name = tf.name
+            json.dump(history_db, tf, ensure_ascii=False, indent=2)
+        os.replace(temp_name, file_path)
+    except Exception as e:
+        if temp_name and os.path.exists(temp_name):
+            try:
+                os.remove(temp_name)
+            except Exception:
+                pass
+        raise e
+
 def run_automation_pipeline() -> bool:
     logger.info("============================================================")
     logger.info("CRM Automated Pipeline Run Started")
@@ -335,8 +355,7 @@ def run_automation_pipeline() -> bool:
         if history_db_updated:
             logger.info("Saving history DB with auto-upgraded legacy content hashes...")
             try:
-                with open(config.DB_JSON_PATH, "w", encoding="utf-8") as f:
-                    json.dump(history_db, f, ensure_ascii=False, indent=2)
+                save_history_db_atomic(history_db)
             except Exception as save_err:
                 logger.warning("Failed to save history DB after auto-upgrade: %s", save_err)
 
@@ -471,8 +490,7 @@ def run_automation_pipeline() -> bool:
                                 
                         # Save checkpoint incrementally
                         try:
-                            with open(config.DB_JSON_PATH, "w", encoding="utf-8") as f:
-                                json.dump(history_db, f, ensure_ascii=False, indent=2)
+                            save_history_db_atomic(history_db)
                         except Exception as save_err:
                             logger.warning("Failed to save history DB checkpoint: %s", save_err)
                     logger.info("Worker finished processing batch %d/%d.", batch_num, total_batches)
@@ -495,8 +513,7 @@ def run_automation_pipeline() -> bool:
             
             # Save new delta results to local JSON DB
             history_db.update(new_fills)
-            with open(config.DB_JSON_PATH, "w", encoding="utf-8") as f:
-                json.dump(history_db, f, ensure_ascii=False, indent=2)
+            save_history_db_atomic(history_db)
             logger.info("JSON History database successfully updated.")
 
         # 6. Tải file đích từ SharePoint Target site (hoặc khởi tạo từ df nếu chưa tồn tại)
