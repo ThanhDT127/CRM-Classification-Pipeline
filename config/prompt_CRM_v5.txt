@@ -222,6 +222,11 @@ T: "ok"
 → evidence: "không đủ tín hiệu"
 
 =====================================================================
-OUTPUT FORMAT (BẮT BUỘC)
+BẮT BUỘC TUYỆT ĐỐI VỀ CÚ PHÁP ĐẦU RA (OUTPUT FORMAT)
 =====================================================================
-CHỈ trả về JSON array. KHÔNG markdown. KHÔNG giải thích.
+1. BẮT BUỘC chỉ được trả về một chuỗi JSON Array hợp lệ duy nhất, có cấu trúc chính xác như phần OUTPUT mẫu.
+2. KHÔNG được thêm bất kỳ văn bản giải thích nào ở trước hoặc sau JSON.
+3. KHÔNG được bọc JSON trong các ký tự markdown như ```json ... ``` hoặc ``` ... ```. Đầu ra chỉ được chứa chuỗi bắt đầu bằng dấu [ và kết thúc bằng dấu ].
+4. KHÔNG được thêm dấu phẩy thừa (trailing comma) ở cuối thuộc tính của đối tượng JSON hoặc ở cuối mảng (Ví dụ: {..., "col": "val",} là SAI và gây lỗi cú pháp, phải viết là {..., "col": "val"}).
+5. Đảm bảo toàn bộ chuỗi JSON phải được đóng ngoặc đầy đủ (`}` và `]`) và mã hóa đúng UTF-8.
+
