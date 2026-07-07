@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import shutil
+import hashlib
 from copy import copy
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -285,12 +286,41 @@ def run_automation_pipeline() -> bool:
                     for col, labels_dict in kw_index.items()}
         brand_pats = [(b, _compile_patterns([b])) for b in brand_list]
 
+        def calculate_row_hash(r) -> str:
+            # Combine all classification inputs to compute a row content hash
+            parts = [
+                str(r.get("Tình trạng hiện tại") or "").strip(),
+                str(r.get("Tình hình tiến độ công trình") or "").strip(),
+                str(r.get("Nội dung làm việc, yêu cầu KH & đánh giá") or "").strip(),
+                str(r.get("Kế hoạch lần tới") or "").strip(),
+                str(r.get("Đề xuất") or "").strip()
+            ]
+            raw_str = "|".join(parts)
+            return hashlib.md5(raw_str.encode("utf-8")).hexdigest()
+
         pending_rows = []
+        history_db_updated = False
         for idx, row in df.iterrows():
             act_id = config.normalize_id(row["ActivityId"])
             if not act_id:
                 continue
-            if act_id not in history_db:
+
+            current_hash = calculate_row_hash(row)
+            is_cached = False
+
+            if act_id in history_db:
+                cached_record = history_db[act_id]
+                cached_hash = cached_record.get("_content_hash")
+                if cached_hash == current_hash:
+                    is_cached = True
+                elif cached_hash is None:
+                    # Legacy / seeded records: auto-upgrade hash to prevent unnecessary LLM runs
+                    cached_record["_content_hash"] = current_hash
+                    history_db_updated = True
+                    is_cached = True
+                    logger.info("Auto-upgraded legacy cache entry for ActivityId: %s", act_id)
+
+            if not is_cached:
                 pending_rows.append({
                     "ActivityId": act_id,
                     "row_idx": idx,
@@ -298,8 +328,17 @@ def run_automation_pipeline() -> bool:
                     "Tình hình tiến độ công trình": row.get("Tình hình tiến độ công trình"),
                     "Nội dung làm việc, yêu cầu KH & đánh giá": row.get("Nội dung làm việc, yêu cầu KH & đánh giá"),
                     "Kế hoạch lần tới": row.get("Kế hoạch lần tới"),
-                    "Đề xuất": row.get("Đề xuất")
+                    "Đề xuất": row.get("Đề xuất"),
+                    "_content_hash": current_hash
                 })
+
+        if history_db_updated:
+            logger.info("Saving history DB with auto-upgraded legacy content hashes...")
+            try:
+                with open(config.DB_JSON_PATH, "w", encoding="utf-8") as f:
+                    json.dump(history_db, f, ensure_ascii=False, indent=2)
+            except Exception as save_err:
+                logger.warning("Failed to save history DB after auto-upgrade: %s", save_err)
 
         logger.info("Total rows in source file: %d | New delta rows to classify: %d", len(df), len(pending_rows))
 
@@ -314,7 +353,10 @@ def run_automation_pipeline() -> bool:
                 act_id = item["ActivityId"]
                 r_val = item.get("Tình trạng hiện tại")
                 r_cleaned = _clean(r_val)
-                row_fills = {config.COL_CURRENT_STATUS: r_cleaned if r_cleaned else None}
+                row_fills = {
+                    config.COL_CURRENT_STATUS: r_cleaned if r_cleaned else None,
+                    "_content_hash": item["_content_hash"]
+                }
                 
                 # Regex step
                 regex_fills = classify_row_regex(item, col_pats, brand_pats)
