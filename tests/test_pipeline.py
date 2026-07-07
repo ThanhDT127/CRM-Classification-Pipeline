@@ -40,3 +40,20 @@ def test_has_price():
     assert _has_price("Giá là 10 triệu đồng") is True
     assert _has_price("Báo giá 5 tỷ vnđ") is True
     assert _has_price("Chỉ hỏi thăm sức khỏe") is False
+
+
+from llm import _parse_llm_json
+
+def test_parse_llm_json_repair():
+    # Test valid JSON array
+    valid_raw = '[{"row_idx": "ACT_001", "fills": {"a": "b"}}]'
+    assert _parse_llm_json(valid_raw) == [{"row_idx": "ACT_001", "fills": {"a": "b"}}]
+    
+    # Test trailing comma in array
+    trailing_comma_array = '[{"row_idx": "ACT_001", "fills": {"a": "b"}},]'
+    assert _parse_llm_json(trailing_comma_array) == [{"row_idx": "ACT_001", "fills": {"a": "b"}}]
+    
+    # Test trailing comma in dict
+    trailing_comma_dict = '[{"row_idx": "ACT_001", "fills": {"a": "b",}}]'
+    assert _parse_llm_json(trailing_comma_dict) == [{"row_idx": "ACT_001", "fills": {"a": "b"}}]
+

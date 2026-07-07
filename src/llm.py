@@ -69,16 +69,45 @@ def _parse_llm_json(text: str) -> List[Dict[str, Any]]:
     start = text.find('[')
     end = text.rfind(']')
     if start != -1 and end != -1 and end > start:
+        candidate = text[start:end + 1]
+        
+        # 1. Try standard JSON parse
         try:
-            return json.loads(text[start:end + 1])
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+            
+        # 2. Try regex-based trailing comma repair (very common LLM syntax error)
+        import re
+        repaired = re.sub(r',\s*\]', ']', candidate)
+        repaired = re.sub(r',\s*\}', '}', repaired)
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass
+            
+        # 3. Try json_repair library fallback (if installed)
+        try:
+            from json_repair import repair_json
+            parsed = repair_json(candidate, return_objects=True)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+
+        # If all repairs fail, save to log for debugging
+        try:
+            log_path = config.PATH_OUTPUT / "logs" / "failed_llm_response.txt"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "w", encoding="utf-8") as f:
+                f.write(text)
+        except Exception:
+            pass
+
+        # Re-run json.loads to raise original JSONDecodeError description
+        try:
+            json.loads(candidate)
         except json.JSONDecodeError as jde:
-            try:
-                log_path = config.PATH_OUTPUT / "logs" / "failed_llm_response.txt"
-                log_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(log_path, "w", encoding="utf-8") as f:
-                    f.write(text)
-            except Exception:
-                pass
             raise ValueError(f"JSONDecodeError: {jde}. Raw response saved to logs/failed_llm_response.txt. Sample: {text[:200]}")
             
     try:
@@ -89,6 +118,7 @@ def _parse_llm_json(text: str) -> List[Dict[str, Any]]:
     except Exception:
         pass
     raise ValueError(f"Could not parse valid JSON array from LLM response (saved to logs/failed_llm_response.txt). Sample: {text[:200]}")
+
 
 def call_llm_batch(
     client: genai.Client,
