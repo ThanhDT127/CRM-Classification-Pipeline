@@ -395,7 +395,6 @@ def run_automation_pipeline() -> bool:
                 total_batches = len(batches)
                 
                 workers = int(os.getenv("GEMINI_CONCURRENT_WORKERS") or "3")
-                logger.info("Processing %d batches concurrently using %d workers...", total_batches, workers)
                 
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 import threading
@@ -405,10 +404,57 @@ def run_automation_pipeline() -> bool:
                 def worker_task(batch_idx, batch):
                     batch_num = batch_idx + 1
                     logger.info("Worker calling Gemini API for batch %d/%d (%d items)...", batch_num, total_batches, len(batch))
-                    res = call_llm_batch(client, model_name, system_prompt, batch)
-                    with lock:
+                    
+                    input_ids = {str(item["row_idx"]) for item in batch}
+                    success_res = []
+                    
+                    try:
+                        # Try to call full batch with max_retry=3
+                        res = call_llm_batch(client, model_name, system_prompt, batch, max_retry=3)
+                        
+                        # Filter successful items and identify missing/truncated ones
+                        output_ids = set()
                         for item in res:
-                            rid = str(item.get("row_idx"))
+                            rid = str(item.get("row_idx") or item.get("idx") or "")
+                            if rid in input_ids:
+                                success_res.append(item)
+                                output_ids.add(rid)
+                        
+                        missing_ids = input_ids - output_ids
+                        if missing_ids:
+                            logger.warning("Batch %d: %d rows missing/truncated from response. Retrying missing rows...", batch_num, len(missing_ids))
+                            missing_items = [row for row in batch if str(row["row_idx"]) in missing_ids]
+                            try:
+                                # Retry only the missing items
+                                retry_res = call_llm_batch(client, model_name, system_prompt, missing_items, max_retry=2)
+                                for item in retry_res:
+                                    rid = str(item.get("row_idx") or item.get("idx") or "")
+                                    if rid in missing_ids:
+                                        success_res.append(item)
+                            except Exception as retry_err:
+                                logger.warning("Batch %d: Retry of missing rows failed: %s. Initiating row-by-row fallback.", batch_num, retry_err)
+                                for m_item in missing_items:
+                                    row_id = m_item["row_idx"]
+                                    try:
+                                        single_res = call_llm_batch(client, model_name, system_prompt, [m_item], max_retry=2)
+                                        success_res.extend(single_res)
+                                    except Exception as single_err:
+                                        logger.error("Row %s failed completely in fallback: %s. Will retry in next run.", row_id, single_err)
+                    except Exception as e:
+                        logger.warning("Batch %d failed after 3 retries due to: %s. Initiating self-healing row-by-row fallback...", batch_num, e)
+                        # Complete batch failure: fallback to processing each row individually
+                        for row_item in batch:
+                            row_id = row_item["row_idx"]
+                            try:
+                                logger.info("Fallback: Processing single row %s...", row_id)
+                                single_res = call_llm_batch(client, model_name, system_prompt, [row_item], max_retry=2)
+                                success_res.extend(single_res)
+                            except Exception as row_err:
+                                logger.error("Row %s failed completely in fallback: %s. Will retry in next run.", row_id, row_err)
+
+                    with lock:
+                        for item in success_res:
+                            rid = str(item.get("row_idx") or item.get("idx") or "")
                             llm_fills = item.get("fills") or {}
                             llm_results[rid] = llm_fills
                             
@@ -429,7 +475,6 @@ def run_automation_pipeline() -> bool:
                                 json.dump(history_db, f, ensure_ascii=False, indent=2)
                         except Exception as save_err:
                             logger.warning("Failed to save history DB checkpoint: %s", save_err)
-                            
                     logger.info("Worker finished processing batch %d/%d.", batch_num, total_batches)
                             
                 with ThreadPoolExecutor(max_workers=workers) as executor:

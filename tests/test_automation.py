@@ -357,3 +357,88 @@ def test_legacy_cache_auto_upgrade(mock_call_llm, mock_init_llm, mock_notifier_c
             assert len(updated_db["ACT_001"]["_content_hash"]) == 32
 
 
+@patch("pipeline.AuthProvider")
+@patch("pipeline.SharePointClient")
+@patch("pipeline.NotificationService")
+@patch("pipeline.init_llm_client")
+@patch("pipeline.call_llm_batch")
+def test_self_healing_fallback(mock_call_llm, mock_init_llm, mock_notifier_cls, mock_sp_cls, mock_auth_cls):
+    mock_auth_inst = MagicMock()
+    mock_auth_cls.return_value = mock_auth_inst
+    
+    mock_sp_inst = MagicMock()
+    mock_sp_cls.return_value = mock_sp_inst
+    
+    mock_notifier_inst = MagicMock()
+    mock_notifier_cls.return_value = mock_notifier_inst
+    
+    mock_llm_client = MagicMock()
+    mock_init_llm.return_value = (mock_llm_client, "gemini-2.5-flash")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        
+        # Override config paths for testing
+        config.PATH_OUTPUT = tmp_path / "output"
+        config.PATH_OUTPUT.mkdir(parents=True, exist_ok=True)
+        config.PATH_INPUT = tmp_path / "CRM_merge.xlsx"
+        config.PATH_BACKUP_DIR = tmp_path / "backups"
+        config.DB_JSON_PATH = config.PATH_OUTPUT / "classified_history_db.json"
+        config.CKPT_JSON = config.PATH_OUTPUT / "llm_fills_checkpoint.json"
+        
+        # Create a mock Excel sheet with 1 row that needs classification
+        df = pd.DataFrame([
+            {
+                "ActivityId": "ACT_001",
+                "Tình trạng hiện tại": "Khách hàng muốn mua bóng đèn LED",
+                "Tình hình tiến độ công trình": "Đang hoàn thiện phần thô",
+                "Nội dung làm việc, yêu cầu KH & đánh giá": "Tư vấn giá và mẫu mã cho anh Thanh",
+                "Kế hoạch lần tới": "Gửi báo giá bóng đèn",
+                "Đề xuất": "Giảm giá 5%"
+            }
+        ])
+        df.to_excel(config.PATH_INPUT, index=False)
+        
+        # Mock SharePoint storage download
+        def side_effect_download(remote_path, local_path, *args, **kwargs):
+            df.to_excel(local_path, index=False)
+            return local_path
+        mock_sp_inst.download_file.side_effect = side_effect_download
+        mock_sp_inst.check_file_exists.return_value = False
+        
+        # Configure side effect for call_llm_batch:
+        # First call (full batch) throws exception (API error)
+        # Second call (fallback for row ACT_001) succeeds
+        mock_call_llm.side_effect = [
+            RuntimeError("Gemini Batch API Error"), # full batch call fails
+            [ # single row fallback call succeeds
+                {
+                    "row_idx": "ACT_001",
+                    "fills": {
+                        config.COL_WORK_CRM: "Bóng LED",
+                        config.COL_OPINION: "Muốn mua bóng đèn LED",
+                        config.COL_PLAN_NEXT: "Gửi báo giá bóng",
+                        config.COL_PROPOSAL: "Giảm giá 5%"
+                    }
+                }
+            ]
+        ]
+        
+        # Run pipeline
+        success = main.run_automation_pipeline()
+        assert success is True
+        
+        # call_llm_batch should be called twice:
+        # 1. Once for the batch (failing)
+        # 2. Once for the individual row (succeeding in fallback)
+        assert mock_call_llm.call_count == 2
+        
+        # Verify the database contains the correctly classified row
+        with open(config.DB_JSON_PATH, "r", encoding="utf-8") as f:
+            history = json.load(f)
+            assert "ACT_001" in history
+            assert history["ACT_001"][config.COL_WORK_CRM] == "Bóng LED"
+            assert "_content_hash" in history["ACT_001"]
+
+
+

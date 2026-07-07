@@ -125,8 +125,8 @@ def call_llm_batch(
     model_name: str,
     system_prompt: str,
     batch: List[Dict[str, Any]],
-    max_retry: int = 5,
-) -> List[Dict[str, Any]]:
+    max_retry: int = 3,
+):
     """Calls Gemini to fill in classification tags for a batch of rows."""
     payload = json.dumps(batch, ensure_ascii=False)
     user_input = "INPUT_JSON_ARRAY:\n" + payload
