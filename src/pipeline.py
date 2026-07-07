@@ -36,6 +36,15 @@ log_file = log_dir / "automation.log"
 logger = logging.getLogger("crm-automation")
 logger.setLevel(logging.INFO)
 
+CACHE_META_PROCESSED = "__DMS_PROCESSED__"
+CACHE_META_CONTENT_HASH = "__DMS_CONTENT_HASH__"
+CACHE_META_UPDATED_AT = "__DMS_UPDATED_AT__"
+CACHE_META_COLUMNS = [
+    CACHE_META_PROCESSED,
+    CACHE_META_CONTENT_HASH,
+    CACHE_META_UPDATED_AT,
+]
+
 # Create formatter
 formatter = logging.Formatter("[%(asctime)s] %(levelname)s [%(name)s] %(message)s")
 
@@ -287,6 +296,36 @@ def map_excel_columns(ws) -> dict:
             col_mapping[col_name] = col_idx
     return col_mapping
 
+def _is_processed_marker(val) -> bool:
+    return str(val or "").strip().lower() in ("1", "true", "yes", "processed")
+
+def _ensure_cache_metadata_columns(ws, col_mapping: dict) -> dict:
+    for col_name in CACHE_META_COLUMNS:
+        col_idx = col_mapping.get(col_name)
+        if not col_idx:
+            col_idx = ws.max_column + 1
+            ws.cell(row=1, column=col_idx, value=col_name)
+            ws.cell(row=2, column=col_idx, value=col_name)
+            col_mapping[col_name] = col_idx
+        ws.column_dimensions[get_column_letter(col_idx)].hidden = True
+    return col_mapping
+
+def _write_cache_metadata(ws, row_num: int, col_mapping: dict, fills: dict) -> None:
+    processed_col = col_mapping.get(CACHE_META_PROCESSED)
+    hash_col = col_mapping.get(CACHE_META_CONTENT_HASH)
+    updated_col = col_mapping.get(CACHE_META_UPDATED_AT)
+
+    if processed_col:
+        ws.cell(row=row_num, column=processed_col, value="1")
+    if hash_col:
+        ws.cell(row=row_num, column=hash_col, value=fills.get("_content_hash"))
+    if updated_col and not ws.cell(row=row_num, column=updated_col).value:
+        ws.cell(
+            row=row_num,
+            column=updated_col,
+            value=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        )
+
 def run_automation_pipeline() -> bool:
     logger.info("============================================================")
     logger.info("CRM Automated Pipeline Run Started")
@@ -399,14 +438,31 @@ def run_automation_pipeline() -> bool:
                                     
                                 # Check if classification columns already have non-empty, non-"mơ hồ" values
                                 fills = {}
+                                has_any_classification = False
+                                processed_col_idx = col_mapping.get(CACHE_META_PROCESSED)
+                                hash_col_idx = col_mapping.get(CACHE_META_CONTENT_HASH)
+                                was_processed = (
+                                    _is_processed_marker(ws.cell(row=r, column=processed_col_idx).value)
+                                    if processed_col_idx
+                                    else False
+                                )
+                                stored_hash = (
+                                    str(ws.cell(row=r, column=hash_col_idx).value or "").strip()
+                                    if hash_col_idx
+                                    else ""
+                                )
                                 for col_name in config.OUTPUT_COLUMNS:
                                     col_idx = col_mapping.get(col_name)
                                     if col_idx:
                                         val = ws.cell(row=r, column=col_idx).value
-                                        if val is not None and str(val).strip() != "" and str(val).strip().lower() != "mơ hồ":
-                                            fills[col_name] = str(val).strip()
+                                        val_clean = str(val).strip() if val is not None else ""
+                                        if val_clean != "" and val_clean.lower() != "mơ hồ":
+                                            fills[col_name] = val_clean
+                                            # Only count it as cached if at least one actual classification target column is filled
+                                            if col_name != config.COL_CURRENT_STATUS:
+                                                has_any_classification = True
                                 
-                                if fills:
+                                if has_any_classification or was_processed:
                                     # Read input values to calculate hash
                                     row_inputs = {}
                                     for col_name in input_cols:
@@ -415,7 +471,7 @@ def run_automation_pipeline() -> bool:
                                             row_inputs[col_name] = ws.cell(row=r, column=col_idx).value
                                     
                                     # Calculate hash using the global helper
-                                    h_val = calculate_row_hash(row_inputs)
+                                    h_val = stored_hash or calculate_row_hash(row_inputs)
                                     
                                     rebuilt_db[act_id] = {
                                         **fills,
@@ -696,6 +752,7 @@ def run_automation_pipeline() -> bool:
         
         # 1. Map column names to indices using the global helper
         col_mapping = map_excel_columns(ws)
+        col_mapping = _ensure_cache_metadata_columns(ws, col_mapping)
                 
         # 3. Map ActivityId to row numbers (data starts at row 3)
         act_id_col_idx = col_mapping.get("ActivityId")
@@ -744,6 +801,7 @@ def run_automation_pipeline() -> bool:
                         elif curr_clean == "mơ hồ":
                             cell.value = None
                             cells_filled_count += 1
+                _write_cache_metadata(ws, row_num, col_mapping, fills)
             else:
                 # Append brand new row at the end
                 if act_id in source_lookup.index:
@@ -768,8 +826,9 @@ def run_automation_pipeline() -> bool:
                         cell.border = copy(ref_cell.border)
                         cell.alignment = copy(ref_cell.alignment)
                         cell.fill = copy(ref_cell.fill)
-                        
+
                     cells_filled_count += len(config.OUTPUT_COLUMNS)
+                    _write_cache_metadata(ws, next_row, col_mapping, fills)
                     
         if new_rows_count:
             logger.info("Appended %d brand new rows to Excel sheet.", new_rows_count)

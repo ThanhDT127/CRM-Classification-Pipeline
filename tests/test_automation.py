@@ -446,6 +446,168 @@ def test_self_healing_fallback(mock_call_llm, mock_init_llm, mock_notifier_cls, 
 @patch("pipeline.NotificationService")
 @patch("pipeline.init_llm_client")
 @patch("pipeline.call_llm_batch")
+def test_rebuild_cache_ignores_current_status_only_rows(mock_call_llm, mock_init_llm, mock_notifier_cls, mock_sp_cls, mock_auth_cls):
+    mock_auth_cls.return_value = MagicMock()
+    mock_sp_inst = MagicMock()
+    mock_sp_cls.return_value = mock_sp_inst
+    mock_notifier_cls.return_value = MagicMock()
+    mock_init_llm.return_value = (MagicMock(), "gemini-2.5-flash")
+    mock_call_llm.return_value = [
+        {"row_idx": "ACT_001", "fills": {config.COL_WORK_CRM: "Tiếp cận ban đầu"}}
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        config.PATH_OUTPUT = tmp_path / "output"
+        config.PATH_OUTPUT.mkdir(parents=True, exist_ok=True)
+        config.PATH_INPUT = tmp_path / "CRM_merge.xlsx"
+        config.PATH_BACKUP_DIR = tmp_path / "backups"
+        config.DB_JSON_PATH = config.PATH_OUTPUT / "classified_history_db.json"
+        config.CKPT_JSON = config.PATH_OUTPUT / "llm_fills_checkpoint.json"
+
+        df = pd.DataFrame([{
+            "ActivityId": "ACT_001",
+            "Tình trạng hiện tại": "Thi công điện nước",
+            "Tình hình tiến độ công trình": "Đang thi công ME",
+            "Nội dung làm việc, yêu cầu KH & đánh giá": "Chờ tiến độ cấp đèn",
+            "Kế hoạch lần tới": None,
+            "Đề xuất": None,
+        }])
+        df.to_excel(config.PATH_INPUT, index=False)
+
+        target_file_name = Path(config.SHAREPOINT_TARGET_FILE_PATH).name
+        target_excel_path = config.PATH_OUTPUT / target_file_name
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.cell(row=1, column=1, value="ActivityId")
+        ws.cell(row=2, column=1, value="ActivityId")
+        ws.cell(row=1, column=2, value="Hoạt Động CRM")
+        ws.cell(row=2, column=2, value="Tình hình hiện tại")
+        ws.cell(row=1, column=3, value="AETT")
+        ws.cell(row=2, column=3, value="Nội dung làm việc")
+        ws.cell(row=1, column=4, value="Tình trạng hiện tại")
+        ws.cell(row=1, column=5, value="Tình hình tiến độ công trình")
+        ws.cell(row=1, column=6, value="Nội dung làm việc, yêu cầu KH & đánh giá")
+        ws.cell(row=1, column=7, value="Kế hoạch lần tới")
+        ws.cell(row=1, column=8, value="Đề xuất")
+        ws.cell(row=3, column=1, value="ACT_001")
+        ws.cell(row=3, column=2, value="Thi công điện nước")
+        ws.cell(row=3, column=3, value="mơ hồ")
+        ws.cell(row=3, column=4, value="Thi công điện nước")
+        ws.cell(row=3, column=5, value="Đang thi công ME")
+        ws.cell(row=3, column=6, value="Chờ tiến độ cấp đèn")
+        wb.save(target_excel_path)
+
+        mock_sp_inst.check_file_exists.return_value = True
+
+        def side_effect_download(remote_path, local_path, *args, **kwargs):
+            if "CRM_merge.xlsx" in str(remote_path):
+                df.to_excel(local_path, index=False)
+            else:
+                wb.save(local_path)
+            return local_path
+
+        mock_sp_inst.download_file.side_effect = side_effect_download
+
+        success = main.run_automation_pipeline()
+        assert success is True
+        assert mock_call_llm.called
+
+        with open(config.DB_JSON_PATH, "r", encoding="utf-8") as f:
+            history = json.load(f)
+        assert history["ACT_001"][config.COL_WORK_CRM] == "Tiếp cận ban đầu"
+
+
+@patch("pipeline.AuthProvider")
+@patch("pipeline.SharePointClient")
+@patch("pipeline.NotificationService")
+@patch("pipeline.init_llm_client")
+@patch("pipeline.call_llm_batch")
+def test_rebuild_cache_preserves_processed_null_rows_from_metadata(mock_call_llm, mock_init_llm, mock_notifier_cls, mock_sp_cls, mock_auth_cls):
+    mock_auth_cls.return_value = MagicMock()
+    mock_sp_inst = MagicMock()
+    mock_sp_cls.return_value = mock_sp_inst
+    mock_notifier_cls.return_value = MagicMock()
+    mock_init_llm.return_value = (MagicMock(), "gemini-2.5-flash")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        config.PATH_OUTPUT = tmp_path / "output"
+        config.PATH_OUTPUT.mkdir(parents=True, exist_ok=True)
+        config.PATH_INPUT = tmp_path / "CRM_merge.xlsx"
+        config.PATH_BACKUP_DIR = tmp_path / "backups"
+        config.DB_JSON_PATH = config.PATH_OUTPUT / "classified_history_db.json"
+        config.CKPT_JSON = config.PATH_OUTPUT / "llm_fills_checkpoint.json"
+
+        source_row = {
+            "ActivityId": "ACT_001",
+            "Tình trạng hiện tại": "Thi công điện nước",
+            "Tình hình tiến độ công trình": "Đang thi công ME",
+            "Nội dung làm việc, yêu cầu KH & đánh giá": "Chờ tiến độ cấp đèn",
+            "Kế hoạch lần tới": None,
+            "Đề xuất": None,
+        }
+        df = pd.DataFrame([source_row])
+        df.to_excel(config.PATH_INPUT, index=False)
+        content_hash = main.calculate_row_hash(source_row)
+
+        target_file_name = Path(config.SHAREPOINT_TARGET_FILE_PATH).name
+        target_excel_path = config.PATH_OUTPUT / target_file_name
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.cell(row=1, column=1, value="ActivityId")
+        ws.cell(row=2, column=1, value="ActivityId")
+        ws.cell(row=1, column=2, value="Hoạt Động CRM")
+        ws.cell(row=2, column=2, value="Tình hình hiện tại")
+        ws.cell(row=1, column=3, value="AETT")
+        ws.cell(row=2, column=3, value="Nội dung làm việc")
+        ws.cell(row=1, column=4, value="Tình trạng hiện tại")
+        ws.cell(row=1, column=5, value="Tình hình tiến độ công trình")
+        ws.cell(row=1, column=6, value="Nội dung làm việc, yêu cầu KH & đánh giá")
+        ws.cell(row=1, column=7, value="Kế hoạch lần tới")
+        ws.cell(row=1, column=8, value="Đề xuất")
+        ws.cell(row=1, column=9, value=main.CACHE_META_PROCESSED)
+        ws.cell(row=2, column=9, value=main.CACHE_META_PROCESSED)
+        ws.cell(row=1, column=10, value=main.CACHE_META_CONTENT_HASH)
+        ws.cell(row=2, column=10, value=main.CACHE_META_CONTENT_HASH)
+        ws.cell(row=3, column=1, value="ACT_001")
+        ws.cell(row=3, column=2, value="Thi công điện nước")
+        ws.cell(row=3, column=3, value=None)
+        ws.cell(row=3, column=4, value="Thi công điện nước")
+        ws.cell(row=3, column=5, value="Đang thi công ME")
+        ws.cell(row=3, column=6, value="Chờ tiến độ cấp đèn")
+        ws.cell(row=3, column=9, value="1")
+        ws.cell(row=3, column=10, value=content_hash)
+        wb.save(target_excel_path)
+
+        mock_sp_inst.check_file_exists.return_value = True
+
+        def side_effect_download(remote_path, local_path, *args, **kwargs):
+            if "CRM_merge.xlsx" in str(remote_path):
+                df.to_excel(local_path, index=False)
+            else:
+                wb.save(local_path)
+            return local_path
+
+        mock_sp_inst.download_file.side_effect = side_effect_download
+
+        success = main.run_automation_pipeline()
+        assert success is True
+        mock_call_llm.assert_not_called()
+
+        with open(config.DB_JSON_PATH, "r", encoding="utf-8") as f:
+            history = json.load(f)
+        assert "ACT_001" in history
+        assert history["ACT_001"]["_content_hash"] == content_hash
+
+
+@patch("pipeline.AuthProvider")
+@patch("pipeline.SharePointClient")
+@patch("pipeline.NotificationService")
+@patch("pipeline.init_llm_client")
+@patch("pipeline.call_llm_batch")
 def test_rebuild_cache_from_excel(mock_call_llm, mock_init_llm, mock_notifier_cls, mock_sp_cls, mock_auth_cls):
     mock_auth_inst = MagicMock()
     mock_auth_cls.return_value = mock_auth_inst
@@ -558,7 +720,6 @@ def test_rebuild_cache_from_excel(mock_call_llm, mock_init_llm, mock_notifier_cl
             assert history["ACT_001"]["[AETT] Nội dung làm việc"] == "Bóng LED"
             assert history["ACT_001"]["[Khách Hàng] Ý kiến KH"] == "Muốn mua bóng đèn LED"
             assert "_content_hash" in history["ACT_001"]
-
 
 
 
