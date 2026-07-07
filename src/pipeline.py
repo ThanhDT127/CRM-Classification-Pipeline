@@ -243,6 +243,21 @@ def save_history_db_atomic(history_db: dict):
                 pass
         raise e
 
+def calculate_row_hash(r) -> str:
+    # Combine all classification inputs to compute a row content hash
+    # Ensure empty cells (NaN, None, "", "nan", "none") on both pandas and openpyxl result in the same empty string
+    import pandas as pd
+    parts = []
+    for col in ["Tình trạng hiện tại", "Tình hình tiến độ công trình", 
+                "Nội dung làm việc, yêu cầu KH & đánh giá", "Kế hoạch lần tới", "Đề xuất"]:
+        val = r.get(col)
+        if pd.isna(val) or val is None or str(val).strip().lower() in ("nan", "none", "null", ""):
+            parts.append("")
+        else:
+            parts.append(str(val).strip())
+    raw_str = "|".join(parts)
+    return hashlib.md5(raw_str.encode("utf-8")).hexdigest()
+
 def run_automation_pipeline() -> bool:
     logger.info("============================================================")
     logger.info("CRM Automated Pipeline Run Started")
@@ -384,15 +399,8 @@ def run_automation_pipeline() -> bool:
                                         if col_idx:
                                             row_inputs[col_name] = ws.cell(row=r, column=col_idx).value
                                     
-                                    # Calculate hash
-                                    raw_str = "|".join([
-                                        str(row_inputs.get("Tình trạng hiện tại") or "").strip(),
-                                        str(row_inputs.get("Tình hình tiến độ công trình") or "").strip(),
-                                        str(row_inputs.get("Nội dung làm việc, yêu cầu KH & đánh giá") or "").strip(),
-                                        str(row_inputs.get("Kế hoạch lần tới") or "").strip(),
-                                        str(row_inputs.get("Đề xuất") or "").strip()
-                                    ])
-                                    h_val = hashlib.md5(raw_str.encode("utf-8")).hexdigest()
+                                    # Calculate hash using the global helper
+                                    h_val = calculate_row_hash(row_inputs)
                                     
                                     rebuilt_db[act_id] = {
                                         **fills,
@@ -417,17 +425,7 @@ def run_automation_pipeline() -> bool:
                     for col, labels_dict in kw_index.items()}
         brand_pats = [(b, _compile_patterns([b])) for b in brand_list]
 
-        def calculate_row_hash(r) -> str:
-            # Combine all classification inputs to compute a row content hash
-            parts = [
-                str(r.get("Tình trạng hiện tại") or "").strip(),
-                str(r.get("Tình hình tiến độ công trình") or "").strip(),
-                str(r.get("Nội dung làm việc, yêu cầu KH & đánh giá") or "").strip(),
-                str(r.get("Kế hoạch lần tới") or "").strip(),
-                str(r.get("Đề xuất") or "").strip()
-            ]
-            raw_str = "|".join(parts)
-            return hashlib.md5(raw_str.encode("utf-8")).hexdigest()
+        # (Using global calculate_row_hash helper)
 
         pending_rows = []
         history_db_updated = False
