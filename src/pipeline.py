@@ -513,15 +513,29 @@ def run_automation_pipeline() -> bool:
                         missing_cols.append(col)
                         
                 if missing_cols:
-                    llm_input_payload.append({
-                        "row_idx": act_id, # Use ActivityId
-                        "Tình trạng hiện tại": item.get("Tình trạng hiện tại") or "",
-                        "Tình hình tiến độ công trình": item.get("Tình hình tiến độ công trình") or "",
-                        "Nội dung làm việc, yêu cầu KH & đánh giá": item.get("Nội dung làm việc, yêu cầu KH & đánh giá") or "",
-                        "Kế hoạch lần tới": item.get("Kế hoạch lần tới") or "",
-                        "Đề xuất": item.get("Đề xuất") or "",
-                        "missing_cols": missing_cols
-                    })
+                    # Check if the row has any input text at all to avoid wasting Gemini tokens
+                    has_any_input = False
+                    for col_name in ["Tình trạng hiện tại", "Tình hình tiến độ công trình", 
+                                "Nội dung làm việc, yêu cầu KH & đánh giá", "Kế hoạch lần tới", "Đề xuất"]:
+                        val = item.get(col_name)
+                        if val is not None and not pd.isna(val) and str(val).strip() != "" and str(val).strip().lower() not in ("nan", "none", "null"):
+                            has_any_input = True
+                            break
+                            
+                    if has_any_input:
+                        llm_input_payload.append({
+                            "row_idx": act_id, # Use ActivityId
+                            "Tình trạng hiện tại": item.get("Tình trạng hiện tại") or "",
+                            "Tình hình tiến độ công trình": item.get("Tình hình tiến độ công trình") or "",
+                            "Nội dung làm việc, yêu cầu KH & đánh giá": item.get("Nội dung làm việc, yêu cầu KH & đánh giá") or "",
+                            "Kế hoạch lần tới": item.get("Kế hoạch lần tới") or "",
+                            "Đề xuất": item.get("Đề xuất") or "",
+                            "missing_cols": missing_cols
+                        })
+                    else:
+                        # For blank rows, we map missing columns to None (empty)
+                        for col in missing_cols:
+                            row_fills[col] = None
                 new_fills[act_id] = row_fills
 
             # 5.2 Call Gemini Client for empty/ambiguous columns
