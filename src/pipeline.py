@@ -285,8 +285,9 @@ def run_automation_pipeline() -> bool:
         shutil.copy(local_excel_path, backup_path)
         logger.info("[OK] Backup created successfully: %s", backup_path.name)
 
-        # 4. Load History DB
+        # 4. Load History DB (Priority 1: JSON)
         history_db = {}
+        cache_loaded_from_json = False
         if config.DB_JSON_PATH.exists():
             try:
                 with open(config.DB_JSON_PATH, "r", encoding="utf-8") as f:
@@ -296,9 +297,119 @@ def run_automation_pipeline() -> bool:
                     k_norm = config.normalize_id(k)
                     if k_norm:
                         history_db[k_norm] = v
-                logger.info("Loaded history DB: %d items", len(history_db))
+                logger.info("Loaded history DB from JSON: %d items", len(history_db))
+                if history_db:
+                    cache_loaded_from_json = True
             except Exception as e:
-                logger.warning("Failed to load history DB JSON: %s. Starting fresh.", e)
+                logger.warning("Failed to load history DB JSON: %s.", e)
+
+        # Priority 2: Rebuild cache from SharePoint target Excel file if JSON cache is empty/missing
+        target_file_name = Path(config.SHAREPOINT_TARGET_FILE_PATH).name
+        target_excel_path = config.PATH_OUTPUT / target_file_name
+        target_downloaded_at_start = False
+
+        if not cache_loaded_from_json:
+            logger.info("JSON cache is empty or corrupt. Checking target file on SharePoint to rebuild cache...")
+            target_exists = False
+            try:
+                target_exists = sp_client.check_file_exists(
+                    config.SHAREPOINT_TARGET_FILE_PATH,
+                    drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
+                )
+            except Exception as e:
+                logger.warning("Failed to check target file existence on SharePoint: %s", e)
+
+            if target_exists:
+                logger.info("Target file exists on SharePoint. Downloading to rebuild JSON cache...")
+                try:
+                    if target_excel_path.exists():
+                        target_excel_path.unlink()
+                    sp_client.download_file(
+                        config.SHAREPOINT_TARGET_FILE_PATH,
+                        target_excel_path,
+                        drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
+                    )
+                    target_downloaded_at_start = True
+                    
+                    # Rebuild history_db from the downloaded target Excel file
+                    rebuilt_db = {}
+                    try:
+                        logger.info("Parsing target Excel file for cache reconstruction...")
+                        wb = openpyxl.load_workbook(target_excel_path, data_only=True)
+                        ws = wb.active
+                        
+                        # Map columns
+                        col_mapping = {}
+                        for col_idx in range(1, ws.max_column + 1):
+                            major = str(ws.cell(row=1, column=col_idx).value or "").strip()
+                            minor = str(ws.cell(row=2, column=col_idx).value or "").strip()
+                            if "." in major:
+                                major = major.split(".")[0].strip()
+                            if "." in minor:
+                                minor = minor.split(".")[0].strip()
+                            
+                            if major in ["Hoạt Động CRM", "AETT", "Khách Hàng", "Kế Hoạch", "Đối Thủ Cạnh Tranh"] and minor:
+                                col_name = f"[{major}] {minor}"
+                            else:
+                                col_name = major or minor
+                            if col_name:
+                                col_mapping[col_name] = col_idx
+                                
+                        act_id_col_idx = col_mapping.get("ActivityId")
+                        if act_id_col_idx:
+                            # Read input columns needed for hash calculation
+                            input_cols = ["Tình trạng hiện tại", "Tình hình tiến độ công trình", 
+                                          "Nội dung làm việc, yêu cầu KH & đánh giá", "Kế hoạch lần tới", "Đề xuất"]
+                            
+                            for r in range(3, ws.max_row + 1):
+                                act_val = ws.cell(row=r, column=act_id_col_idx).value
+                                act_id = config.normalize_id(act_val)
+                                if not act_id:
+                                    continue
+                                    
+                                # Check if classification columns already have non-empty, non-"mơ hồ" values
+                                fills = {}
+                                for col_name in config.OUTPUT_COLUMNS:
+                                    col_idx = col_mapping.get(col_name)
+                                    if col_idx:
+                                        val = ws.cell(row=r, column=col_idx).value
+                                        if val is not None and str(val).strip() != "" and str(val).strip().lower() != "mơ hồ":
+                                            fills[col_name] = str(val).strip()
+                                
+                                if fills:
+                                    # Read input values to calculate hash
+                                    row_inputs = {}
+                                    for col_name in input_cols:
+                                        col_idx = col_mapping.get(col_name)
+                                        if col_idx:
+                                            row_inputs[col_name] = ws.cell(row=r, column=col_idx).value
+                                    
+                                    # Calculate hash
+                                    raw_str = "|".join([
+                                        str(row_inputs.get("Tình trạng hiện tại") or "").strip(),
+                                        str(row_inputs.get("Tình hình tiến độ công trình") or "").strip(),
+                                        str(row_inputs.get("Nội dung làm việc, yêu cầu KH & đánh giá") or "").strip(),
+                                        str(row_inputs.get("Kế hoạch lần tới") or "").strip(),
+                                        str(row_inputs.get("Đề xuất") or "").strip()
+                                    ])
+                                    h_val = hashlib.md5(raw_str.encode("utf-8")).hexdigest()
+                                    
+                                    rebuilt_db[act_id] = {
+                                        **fills,
+                                        "_content_hash": h_val
+                                    }
+                        wb.close()
+                        logger.info("Reconstructed %d cached entries from Excel.", len(rebuilt_db))
+                    except Exception as parse_err:
+                        logger.error("Failed to parse target Excel for cache reconstruction: %s", parse_err)
+                        
+                    if rebuilt_db:
+                        history_db.update(rebuilt_db)
+                        # Save the reconstructed cache back as a healthy JSON file
+                        save_history_db_atomic(history_db)
+                        logger.info("Saved reconstructed cache to JSON history DB.")
+                except Exception as dl_err:
+                    logger.error("Failed to download or rebuild cache from target Excel: %s", dl_err)
 
         # 5. Extract Keywords Patterns & Filter Delta Rows
         kw_index, brand_list = load_and_index_keywords()
@@ -519,35 +630,37 @@ def run_automation_pipeline() -> bool:
         # 6. Tải file đích từ SharePoint Target site (hoặc khởi tạo từ df nếu chưa tồn tại)
         target_file_name = Path(config.SHAREPOINT_TARGET_FILE_PATH).name
         target_excel_path = config.PATH_OUTPUT / target_file_name
-        if target_excel_path.exists():
-            try:
-                target_excel_path.unlink()
-            except Exception:
-                pass
-
-        target_exists = sp_client.check_file_exists(
-            config.SHAREPOINT_TARGET_FILE_PATH, 
-            drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
-        )
         
-        if not target_exists:
-            logger.info("Target file does not exist on SharePoint. Initializing from source schema...")
-            # If target file doesn't exist, we save source df to excel and style it as base template
-            df.to_excel(target_excel_path, index=False)
-            apply_excel_styling(target_excel_path)
-            # Upload styled template to SharePoint
-            sp_client.upload_file(
-                target_excel_path, 
+        if not target_downloaded_at_start:
+            if target_excel_path.exists():
+                try:
+                    target_excel_path.unlink()
+                except Exception:
+                    pass
+
+            target_exists = sp_client.check_file_exists(
                 config.SHAREPOINT_TARGET_FILE_PATH, 
                 drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
             )
-        
-        logger.info("Downloading target file from SharePoint Target site...")
-        sp_client.download_file(
-            config.SHAREPOINT_TARGET_FILE_PATH, 
-            target_excel_path, 
-            drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
-        )
+            
+            if not target_exists:
+                logger.info("Target file does not exist on SharePoint. Initializing from source schema...")
+                # If target file doesn't exist, we save source df to excel and style it as base template
+                df.to_excel(target_excel_path, index=False)
+                apply_excel_styling(target_excel_path)
+                # Upload styled template to SharePoint
+                sp_client.upload_file(
+                    target_excel_path, 
+                    config.SHAREPOINT_TARGET_FILE_PATH, 
+                    drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
+                )
+            
+            logger.info("Downloading target file from SharePoint Target site...")
+            sp_client.download_file(
+                config.SHAREPOINT_TARGET_FILE_PATH, 
+                target_excel_path, 
+                drive_id=config.SHAREPOINT_TARGET_DRIVE_ID
+            )
         
         # Open Excel workbook in openpyxl for in-place writing
         logger.info("Opening target Excel file for in-place update...")

@@ -441,4 +441,124 @@ def test_self_healing_fallback(mock_call_llm, mock_init_llm, mock_notifier_cls, 
             assert "_content_hash" in history["ACT_001"]
 
 
+@patch("pipeline.AuthProvider")
+@patch("pipeline.SharePointClient")
+@patch("pipeline.NotificationService")
+@patch("pipeline.init_llm_client")
+@patch("pipeline.call_llm_batch")
+def test_rebuild_cache_from_excel(mock_call_llm, mock_init_llm, mock_notifier_cls, mock_sp_cls, mock_auth_cls):
+    mock_auth_inst = MagicMock()
+    mock_auth_cls.return_value = mock_auth_inst
+    
+    mock_sp_inst = MagicMock()
+    mock_sp_cls.return_value = mock_sp_inst
+    
+    mock_notifier_inst = MagicMock()
+    mock_notifier_cls.return_value = mock_notifier_inst
+    
+    mock_llm_client = MagicMock()
+    mock_init_llm.return_value = (mock_llm_client, "gemini-2.5-flash")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        
+        # Override config paths for testing
+        config.PATH_OUTPUT = tmp_path / "output"
+        config.PATH_OUTPUT.mkdir(parents=True, exist_ok=True)
+        config.PATH_INPUT = tmp_path / "CRM_merge.xlsx"
+        config.PATH_BACKUP_DIR = tmp_path / "backups"
+        config.DB_JSON_PATH = config.PATH_OUTPUT / "classified_history_db.json"
+        config.CKPT_JSON = config.PATH_OUTPUT / "llm_fills_checkpoint.json"
+        
+        # 1. Create a mock source Excel sheet
+        df = pd.DataFrame([
+            {
+                "ActivityId": "ACT_001",
+                "Tình trạng hiện tại": "Khách hàng muốn mua bóng đèn LED",
+                "Tình hình tiến độ công trình": "Đang hoàn thiện phần thô",
+                "Nội dung làm việc, yêu cầu KH & đánh giá": "Tư vấn giá và mẫu mã cho anh Thanh",
+                "Kế hoạch lần tới": "Gửi báo giá bóng đèn",
+                "Đề xuất": "Giảm giá 5%"
+            }
+        ])
+        df.to_excel(config.PATH_INPUT, index=False)
+        
+        # 2. Create a mock target Excel sheet that already contains classifications
+        target_file_name = Path(config.SHAREPOINT_TARGET_FILE_PATH).name
+        target_excel_path = config.PATH_OUTPUT / target_file_name
+        
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        
+        # Row 1 headers (categories)
+        ws.cell(row=1, column=1, value="ActivityId")
+        ws.cell(row=1, column=2, value="AETT")
+        ws.cell(row=1, column=3, value="Khách Hàng")
+        ws.cell(row=1, column=4, value="Kế Hoạch")
+        ws.cell(row=1, column=5, value="Kế Hoạch")
+        ws.cell(row=1, column=6, value="Tình trạng hiện tại")
+        ws.cell(row=1, column=7, value="Tình hình tiến độ công trình")
+        ws.cell(row=1, column=8, value="Nội dung làm việc, yêu cầu KH & đánh giá")
+        ws.cell(row=1, column=9, value="Kế hoạch lần tới")
+        ws.cell(row=1, column=10, value="Đề xuất")
+        
+        # Row 2 headers (column names)
+        ws.cell(row=2, column=1, value="ActivityId")
+        ws.cell(row=2, column=2, value="Nội dung làm việc")
+        ws.cell(row=2, column=3, value="Ý kiến KH")
+        ws.cell(row=2, column=4, value="Kế hoạch lần tới")
+        ws.cell(row=2, column=5, value="Đề xuất")
+        ws.cell(row=2, column=6, value="Tình trạng hiện tại")
+        ws.cell(row=2, column=7, value="Tình hình tiến độ công trình")
+        ws.cell(row=2, column=8, value="Nội dung làm việc, yêu cầu KH & đánh giá")
+        ws.cell(row=2, column=9, value="Kế hoạch lần tới")
+        ws.cell(row=2, column=10, value="Đề xuất")
+        
+        # Row 3 (data)
+        ws.cell(row=3, column=1, value="ACT_001")
+        ws.cell(row=3, column=2, value="Bóng LED")
+        ws.cell(row=3, column=3, value="Muốn mua bóng đèn LED")
+        ws.cell(row=3, column=4, value="Gửi báo giá bóng")
+        ws.cell(row=3, column=5, value="Giảm giá 5%")
+        ws.cell(row=3, column=6, value="Khách hàng muốn mua bóng đèn LED")
+        ws.cell(row=3, column=7, value="Đang hoàn thiện phần thô")
+        ws.cell(row=3, column=8, value="Tư vấn giá và mẫu mã cho anh Thanh")
+        ws.cell(row=3, column=9, value="Gửi báo giá bóng đèn")
+        ws.cell(row=3, column=10, value="Giảm giá 5%")
+        
+        wb.save(target_excel_path)
+        
+        # Mock SharePoint storage: check_file_exists returns True
+        mock_sp_inst.check_file_exists.return_value = True
+        
+        # Mock SharePoint storage download: copies df/target_excel to local destination
+        def side_effect_download(remote_path, local_path, *args, **kwargs):
+            if "CRM_merge.xlsx" in str(remote_path):
+                df.to_excel(local_path, index=False)
+            else:
+                wb.save(local_path)
+            return local_path
+        mock_sp_inst.download_file.side_effect = side_effect_download
+        
+        # Ensure json cache does not exist initially
+        assert not config.DB_JSON_PATH.exists()
+        
+        # Run pipeline
+        success = main.run_automation_pipeline()
+        assert success is True
+        
+        # Gemini LLM should NOT be called because the cache was rebuilt from target Excel and matched the source text
+        mock_call_llm.assert_not_called()
+        
+        # Verify the database was created and contains the reconstructed cache
+        assert config.DB_JSON_PATH.exists()
+        with open(config.DB_JSON_PATH, "r", encoding="utf-8") as f:
+            history = json.load(f)
+            assert "ACT_001" in history
+            assert history["ACT_001"]["[AETT] Nội dung làm việc"] == "Bóng LED"
+            assert history["ACT_001"]["[Khách Hàng] Ý kiến KH"] == "Muốn mua bóng đèn LED"
+            assert "_content_hash" in history["ACT_001"]
+
+
+
 
