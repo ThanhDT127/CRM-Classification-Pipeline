@@ -636,34 +636,34 @@ def run_automation_pipeline() -> bool:
                         missing_ids = input_ids - output_ids
                         if missing_ids:
                             logger.warning("Batch %d: %d rows missing/truncated from response. Retrying missing rows...", batch_num, len(missing_ids))
-                            missing_items = [row for row in batch if str(row["row_idx"]) in missing_ids]
-                            try:
-                                # Retry only the missing items
-                                retry_res = call_llm_batch(client, model_name, system_prompt, missing_items, max_retry=2)
-                                for item in retry_res:
-                                    rid = str(item.get("row_idx") or item.get("idx") or "")
-                                    if rid in missing_ids:
-                                        success_res.append(item)
-                            except Exception as retry_err:
-                                logger.warning("Batch %d: Retry of missing rows failed: %s. Initiating row-by-row fallback.", batch_num, retry_err)
-                                for m_item in missing_items:
-                                    row_id = m_item["row_idx"]
-                                    try:
-                                        single_res = call_llm_batch(client, model_name, system_prompt, [m_item], max_retry=2)
-                                        success_res.extend(single_res)
-                                    except Exception as single_err:
-                                        logger.error("Row %s failed completely in fallback: %s. Will retry in next run.", row_id, single_err)
+                            current_missing_items = [row for row in batch if str(row["row_idx"]) in missing_ids]
+                            
+                            # Retry missing items as a batch up to 3 times to save tokens
+                            retry_attempts = 3
+                            for attempt in range(1, retry_attempts + 1):
+                                if not current_missing_items:
+                                    break
+                                logger.info("Batch %d: Retrying %d missing items as a batch (Attempt %d/%d)...", 
+                                            batch_num, len(current_missing_items), attempt, retry_attempts)
+                                try:
+                                    retry_res = call_llm_batch(client, model_name, system_prompt, current_missing_items, max_retry=2)
+                                    for item in retry_res:
+                                        rid = str(item.get("row_idx") or item.get("idx") or "")
+                                        if rid in missing_ids:
+                                            success_res.append(item)
+                                            output_ids.add(rid)
+                                    
+                                    # Recalculate remaining missing items
+                                    still_missing_ids = {str(x["row_idx"]) for x in current_missing_items} - {str(x.get("row_idx") or x.get("idx") or "") for x in retry_res}
+                                    current_missing_items = [row for row in current_missing_items if str(row["row_idx"]) in still_missing_ids]
+                                except Exception as retry_err:
+                                    logger.warning("Batch %d: Batch retry attempt %d failed: %s", batch_num, attempt, retry_err)
+                            
+                            if current_missing_items:
+                                logger.error("Batch %d: %d items failed to classify after %d batch retries.", 
+                                             batch_num, len(current_missing_items), retry_attempts)
                     except Exception as e:
-                        logger.warning("Batch %d failed after 3 retries due to: %s. Initiating self-healing row-by-row fallback...", batch_num, e)
-                        # Complete batch failure: fallback to processing each row individually
-                        for row_item in batch:
-                            row_id = row_item["row_idx"]
-                            try:
-                                logger.info("Fallback: Processing single row %s...", row_id)
-                                single_res = call_llm_batch(client, model_name, system_prompt, [row_item], max_retry=2)
-                                success_res.extend(single_res)
-                            except Exception as row_err:
-                                logger.error("Row %s failed completely in fallback: %s. Will retry in next run.", row_id, row_err)
+                        logger.error("Batch %d: Complete batch failure after 3 retries: %s. Skipping items in this batch to save tokens.", batch_num, e)
 
                     with lock:
                         for item in success_res:
@@ -674,8 +674,9 @@ def run_automation_pipeline() -> bool:
                             # Merge back into new_fills in-place
                             if rid in new_fills:
                                 fills = new_fills[rid]
-                                for col, val in llm_fills.items():
-                                    if col in config.LLM_TARGET_COLS:
+                                for col in config.LLM_TARGET_COLS:
+                                    if fills.get(col) == "mơ hồ" or fills.get(col) is None:
+                                        val = llm_fills.get(col)
                                         if val is None or str(val).strip() == "":
                                             fills[col] = None
                                         else:
@@ -698,12 +699,19 @@ def run_automation_pipeline() -> bool:
                 for act_id, fills in new_fills.items():
                     if act_id in llm_results:
                         llm_fills = llm_results[act_id]
-                        for col, val in llm_fills.items():
-                            if col in config.LLM_TARGET_COLS:
+                        for col in config.LLM_TARGET_COLS:
+                            if fills.get(col) == "mơ hồ" or fills.get(col) is None:
+                                val = llm_fills.get(col)
                                 if val is None or str(val).strip() == "":
                                     fills[col] = None
                                 else:
                                     fills[col] = str(val).strip()
+            
+                # Ensure no "mơ hồ" strings remain in the final classifications
+                for act_id, fills in new_fills.items():
+                    for col in config.LLM_TARGET_COLS:
+                        if fills.get(col) == "mơ hồ":
+                            fills[col] = None
             
             # Save new delta results to local JSON DB
             history_db.update(new_fills)
