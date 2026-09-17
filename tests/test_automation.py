@@ -75,17 +75,25 @@ def test_notification_service_send_email(mock_auth):
     # Temporarily set config values
     config.NOTIFICATION_SENDER_EMAIL = "sender@domain.com"
     config.NOTIFICATION_RECIPIENTS = ["rec@domain.com"]
-    
-    notifier = NotificationService(mock_auth)
-    notifier.session = MagicMock()
-    
-    mock_resp = MagicMock()
-    mock_resp.status_code = 202
-    notifier.session.post.return_value = mock_resp
-    
-    success = notifier._send_email("Test Subject", "<h1>Test Body</h1>")
-    assert success is True
-    notifier.session.post.assert_called_once()
+    # This test covers the Graph path, so pin the transport. Without this it takes
+    # the SMTP path added by the mail change, which reads the real credentials out
+    # of .env and posts a real message to a real server.
+    transport_before = config.MAIL_TRANSPORT
+    config.MAIL_TRANSPORT = "graph"
+
+    try:
+        notifier = NotificationService(mock_auth)
+        notifier.session = MagicMock()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 202
+        notifier.session.post.return_value = mock_resp
+
+        success = notifier._send_email("Test Subject", "<h1>Test Body</h1>")
+        assert success is True
+        notifier.session.post.assert_called_once()
+    finally:
+        config.MAIL_TRANSPORT = transport_before
 
 @patch("pipeline.AuthProvider")
 @patch("pipeline.SharePointClient")

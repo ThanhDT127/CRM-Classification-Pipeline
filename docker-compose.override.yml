@@ -1,0 +1,41 @@
+# Noi container CRM vao mang cua API Gateway. File nay KHONG thay the
+# docker-compose.yml -- Compose gop hai file lai.
+#
+# BAY: docker-compose.yml cua CRM KHONG khai `networks:` nao, nen `crm-classifier`
+# dang dung mang `default` NGAM DINH cua project. Neu o day chi viet
+# `networks: [gateway]` thi Compose BO mang ngam dinh do di, va container roi khoi
+# mang cua chinh project CRM. Phai liet ke CA HAI.
+#
+# KHONG dung `host.docker.internal`: `gateway-lb` co y chi bind 127.0.0.1 de
+# Gateway khong ra mang, va chuyen tu container thuoc project khac co xuyen duoc
+# vao cong chi-loopback hay khong thi CHUA AI KIEM.
+#
+# Ten mang ben ngoai la mang `default` cua project token-ledger-dashboard. Da do
+# 09/09: `docker network ls` cho `token-ledger-dashboard_default`, va tu trong
+# container CRM goi duoc `http://gateway-lb:4000` (harness tra ve 200, 2,75 giay).
+services:
+  crm-classifier:
+    networks:
+      - default
+      - gateway
+    environment:
+      # Chon duong goi. Bo bien nay la lui ve nhanh cu ngay, khong sua code.
+      - GEMINI_BACKEND=gateway
+      # Ten service cua load balancer BEN TRONG mang compose, khong doi theo may.
+      - GEMINI_GATEWAY_BASE_URL=http://gateway-lb:4000
+      # Dinh danh DICH VU, khong bia ra mot con nguoi. Account 951 da co san trong
+      # danh muc. Gia tri nay vao cot `end_user` cua so.
+      - GEMINI_GATEWAY_USER=svc.crm-feedback
+      # Ten model KHONG co tien to `models/`: Gateway khai ten nhom la
+      # `gemini-2.5-flash`. README cua CRM dan dat `models/gemini-2.5-flash` --
+      # dung theo README o day thi ra "model not found".
+      - GEMINI_MODEL=gemini-2.5-flash
+      # GEMINI_API_KEY phai la VIRTUAL KEY cua Gateway (sk-...), KHONG phai khoa
+      # Google. Dat trong .env cua CRM. Do la toan bo diem cua viec di qua
+      # Gateway: agent khong con giu khoa nha cung cap nen KHONG THE di vong.
+
+networks:
+  default:
+  gateway:
+    external: true
+    name: token-ledger-dashboard_default

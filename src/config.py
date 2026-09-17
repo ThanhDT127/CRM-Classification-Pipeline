@@ -51,6 +51,23 @@ NOTIFICATION_RECIPIENTS = [email.strip() for email in _recipients_str.split(",")
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
+# Duong gui thu: "smtp" (dung duoc ngay) hoac "graph" (can AZURE_* o tren).
+MAIL_TRANSPORT = (os.getenv("MAIL_TRANSPORT") or "smtp").strip().lower()
+SMTP_HOST = os.getenv("SMTP_HOST") or ""
+SMTP_PORT = int(os.getenv("SMTP_PORT") or "587")
+SMTP_USERNAME = os.getenv("SMTP_USERNAME") or ""
+SMTP_USE_TLS = (os.getenv("SMTP_USE_TLS") or "True").lower() in ("true", "1", "yes")
+# Doc tu bien moi truong. `.env` khong theo git (.gitignore dong 2).
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or ""
+
+# --- Duong DU PHONG khi Gateway chet ---
+# TIEN CHAY VAO PROJECT NAO: `crm-test-508114` (lay tu sa-key.json), KHONG phai
+# `crm-500509` ma dim_agent dang ghi cho agent 7. Chot 12/09: giai doan phat trien
+# chap nhan lech; PHAI xem lai truoc khi len server.
+FALLBACK_ENABLED = (os.getenv("FALLBACK_ENABLED") or "False").lower() in ("true", "1", "yes")
+FALLBACK_FAIL_THRESHOLD = int(os.getenv("FALLBACK_FAIL_THRESHOLD") or "3")
+FALLBACK_RETRY_AFTER_S = float(os.getenv("FALLBACK_RETRY_AFTER_S") or "60")
+
 
 # --- Column naming helper ---
 def col_name(major: str, minor: str) -> str:

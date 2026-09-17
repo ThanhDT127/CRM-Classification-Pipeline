@@ -1,5 +1,8 @@
 import logging
+import smtplib
 from datetime import datetime
+from email.message import EmailMessage
+
 import requests
 
 import config
@@ -7,23 +10,74 @@ from sharepoint import AuthProvider
 
 logger = logging.getLogger("crm-automation")
 
+
+def send_alert(subject: str, html_body: str) -> bool:
+    """Gui mot thu canh bao KHONG can AuthProvider.
+
+    `NotificationService` doi mot AuthProvider vi duong Graph can token Azure.
+    Duong SMTP thi khong can gi ca, va `llm.py` khong co AuthProvider trong tay --
+    no duoc dung o tang duoi tang pipeline. Ham nay la cua duy nhat cho no.
+
+    KHONG BAO GIO NEM LOI: bao dong la viec phu, xu ly du lieu la viec chinh.
+    """
+    try:
+        svc = NotificationService.__new__(NotificationService)
+        return svc._send_email(subject, html_body)
+    except Exception as e:
+        logger.error("Khong gui duoc thu canh bao: %s", e)
+        return False
+
+
 class NotificationService:
     """Sends email notifications via Microsoft Graph sendMail endpoint using App Credentials."""
     def __init__(self, auth: AuthProvider) -> None:
         self.auth = auth
         self.session = requests.Session()
 
+    def _send_email_smtp(self, subject: str, html_body: str,
+                         sender: str, recipients: list) -> bool:
+        """Duong gui THUONG. Dung khi chua co thong tin dang nhap Azure.
+
+        Ton tai canh duong Graph chu khong thay the no: Graph gui bang hom thu cong ty
+        va la duong cho production. Do 12/09: ca ba bien AZURE_* deu trong, nen duong
+        Graph CHUA TUNG gui duoc thu nao.
+        """
+        if not config.SMTP_HOST or not config.SMTP_PASSWORD:
+            logger.warning("Email skipped: SMTP_HOST/SMTP_PASSWORD is not configured.")
+            return False
+
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = sender
+        msg["To"] = ", ".join(recipients)
+        msg.set_content(html_body, subtype="html")
+
+        try:
+            with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT, timeout=20) as s:
+                if config.SMTP_USE_TLS:
+                    s.starttls()
+                s.login(config.SMTP_USERNAME or sender, config.SMTP_PASSWORD)
+                s.send_message(msg)
+            logger.info("Email sent via SMTP from %s -> %s", sender, ", ".join(recipients))
+            return True
+        except Exception as e:
+            logger.warning("SMTP send failed: %s", e)
+            return False
+
     def _send_email(self, subject: str, html_body: str) -> bool:
         sender = config.NOTIFICATION_SENDER_EMAIL
         recipients = config.NOTIFICATION_RECIPIENTS
-        
+
         if not sender:
             logger.warning("Email skipped: NOTIFICATION_SENDER_EMAIL is not configured.")
             return False
         if not recipients:
             logger.warning("Email skipped: NOTIFICATION_RECIPIENTS is not configured.")
             return False
-            
+
+        if config.MAIL_TRANSPORT == "smtp":
+            return self._send_email_smtp(subject, html_body, sender, recipients)
+
         url = f"{config.GRAPH_BASE}/users/{sender}/sendMail"
         to_recipients = [{"emailAddress": {"address": addr}} for addr in recipients]
         
