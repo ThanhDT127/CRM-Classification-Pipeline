@@ -99,9 +99,12 @@ def test_request_error_does_not_switch():
 
 def test_many_threads_switch_once():
     """Ba worker cung gap loi trong cung mot su co -> doi duong DUNG mot lan."""
-    counter = {"sent": 0}
-    original = llm._notify
-    llm._notify = lambda *a: counter.__setitem__("sent", counter["sent"] + 1)
+    # Dem SU KIEN doi duong, khong dem he qua cua no. Truoc day dem so thu gui di;
+    # thu chi la dai luong thay the, con dong log `DOI DUONG` MOI la su kien that.
+    counter = {"doi": 0}
+    original = llm.log_fallback
+    llm.log_fallback = lambda cau: counter.__setitem__(
+        "doi", counter["doi"] + cau.startswith("DOI DUONG"))
     try:
         gw = _FakeClient(fail_times=999, name="gateway")
         c = llm._FallbackClient(gw, lambda: _FakeClient(name="thang"), threshold=3, retry_after_s=999)
@@ -117,16 +120,17 @@ def test_many_threads_switch_once():
         [t.start() for t in ts]
         [t.join() for t in ts]
         assert c._on_fallback
-        assert counter["sent"] == 1, f"gui {counter['sent']} thu cho mot su co, dang le 1"
+        assert counter["doi"] == 1, f"doi duong {counter['doi']} lan cho mot su co, dang le 1"
     finally:
-        llm._notify = original
+        llm.log_fallback = original
 
 
 def test_probe_returns_to_gateway():
     """Qua han cho thi THAM DO Gateway; chi doi trang thai khi tham do THANH CONG."""
-    counter = {"sent": 0}
-    original = llm._notify
-    llm._notify = lambda *a: counter.__setitem__("sent", counter["sent"] + 1)
+    counter = {"moc": 0}
+    original = llm.log_fallback
+    llm.log_fallback = lambda cau: counter.__setitem__(
+        "moc", counter["moc"] + cau.startswith(("DOI DUONG", "VE DUONG CU")))
     try:
         gw = _FakeClient(fail_times=3, name="gateway")
         c = llm._FallbackClient(gw, lambda: _FakeClient(name="thang"), threshold=3, retry_after_s=0.05)
@@ -136,15 +140,15 @@ def test_probe_returns_to_gateway():
             except RuntimeError:
                 pass
         assert c._on_fallback
-        assert counter["sent"] == 1
+        assert counter["moc"] == 1
 
         time.sleep(0.06)
         r = c.models.generate_content(model="m", contents="x")
         assert r.text == "gateway", "tham do thanh cong ma khong dung ket qua Gateway"
         assert not c._on_fallback, "tham do thanh cong ma khong quay ve"
-        assert counter["sent"] == 2, "mot su co phai sinh DUNG hai thu"
+        assert counter["moc"] == 2, "mot su co phai sinh DUNG hai moc: di va ve"
     finally:
-        llm._notify = original
+        llm.log_fallback = original
 
 
 def test_failed_probe_keeps_fallback():
@@ -176,12 +180,6 @@ def test_nguong_khong_duoc_lon_hon_so_lan_thu_lai():
 
 
 def main():
-    # CHAN GUI THU cho MOI phep kiem. Khong chan thi bo kiem gui thu original vao hop
-    # thu nguoi original moi lan worker -- da xay ra mot lan khi viet file nay.
-    # Hai phep kiem tu thay `_notify` de counter so thu; chung tu khoi phuc lai
-    # ban nay trong `finally`.
-    llm._notify = lambda *a, **k: None
-
     passed = 0
     for name, func in sorted(globals().items()):
         if name.startswith("test_"):
