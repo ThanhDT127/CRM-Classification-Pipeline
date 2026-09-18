@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+
 import requests
 
 import config
@@ -16,14 +17,14 @@ class NotificationService:
     def _send_email(self, subject: str, html_body: str) -> bool:
         sender = config.NOTIFICATION_SENDER_EMAIL
         recipients = config.NOTIFICATION_RECIPIENTS
-        
+
         if not sender:
             logger.warning("Email skipped: NOTIFICATION_SENDER_EMAIL is not configured.")
             return False
         if not recipients:
             logger.warning("Email skipped: NOTIFICATION_RECIPIENTS is not configured.")
             return False
-            
+
         url = f"{config.GRAPH_BASE}/users/{sender}/sendMail"
         to_recipients = [{"emailAddress": {"address": addr}} for addr in recipients]
         

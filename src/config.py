@@ -51,6 +51,14 @@ NOTIFICATION_RECIPIENTS = [email.strip() for email in _recipients_str.split(",")
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
+# --- Duong DU PHONG khi Gateway chet ---
+# TIEN CHAY VAO PROJECT NAO: `crm-test-508114` (lay tu sa-key.json), KHONG phai
+# `crm-500509` ma dim_agent dang ghi cho agent 7. Chot 12/09: giai doan phat trien
+# chap nhan lech; PHAI xem lai truoc khi len server.
+FALLBACK_ENABLED = (os.getenv("FALLBACK_ENABLED") or "False").lower() in ("true", "1", "yes")
+FALLBACK_FAIL_THRESHOLD = int(os.getenv("FALLBACK_FAIL_THRESHOLD") or "3")
+FALLBACK_RETRY_AFTER_S = float(os.getenv("FALLBACK_RETRY_AFTER_S") or "60")
+
 
 # --- Column naming helper ---
 def col_name(major: str, minor: str) -> str:
