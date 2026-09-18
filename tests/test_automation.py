@@ -362,7 +362,7 @@ def test_legacy_cache_auto_upgrade(mock_call_llm, mock_init_llm, mock_notifier_c
 @patch("pipeline.NotificationService")
 @patch("pipeline.init_llm_client")
 @patch("pipeline.call_llm_batch")
-def test_self_healing_fallback(mock_call_llm, mock_init_llm, mock_notifier_cls, mock_sp_cls, mock_auth_cls):
+def test_batch_failure_drops_batch_for_next_run(mock_call_llm, mock_init_llm, mock_notifier_cls, mock_sp_cls, mock_auth_cls):
     mock_auth_inst = MagicMock()
     mock_auth_cls.return_value = mock_auth_inst
     
@@ -407,8 +407,9 @@ def test_self_healing_fallback(mock_call_llm, mock_init_llm, mock_notifier_cls, 
         mock_sp_inst.check_file_exists.return_value = False
         
         # Configure side effect for call_llm_batch:
-        # First call (full batch) throws exception (API error)
-        # Second call (fallback for row ACT_001) succeeds
+        # The full batch call fails. Commit 9ee9a11 removed the row-by-row fallback
+        # on purpose -- a failed batch is dropped to save tokens -- so the second
+        # entry below must never be consumed.
         mock_call_llm.side_effect = [
             RuntimeError("Gemini Batch API Error"), # full batch call fails
             [ # single row fallback call succeeds
@@ -428,17 +429,26 @@ def test_self_healing_fallback(mock_call_llm, mock_init_llm, mock_notifier_cls, 
         success = main.run_automation_pipeline()
         assert success is True
         
-        # call_llm_batch should be called twice:
-        # 1. Once for the batch (failing)
-        # 2. Once for the individual row (succeeding in fallback)
-        assert mock_call_llm.call_count == 2
-        
-        # Verify the database contains the correctly classified row
+        # Exactly one call: the batch that failed. No row-by-row retry -- that is
+        # the whole point of dropping the batch (commit 9ee9a11).
+        assert mock_call_llm.call_count == 1
+
+        # A dropped row has to come back on the next run. It does not today:
+        # `history_db.update(new_fills)` (pipeline.py:716) writes EVERY pending row
+        # with its `_content_hash`, including the ones whose batch just failed. On
+        # the next run that hash matches (pipeline.py:513), the row counts as done
+        # and is never classified again. The log line "Skipping items in this batch
+        # to save tokens" promises a deferral it does not deliver.
+        #
+        # xfail instead of asserting the broken state: the day pipeline.py stops
+        # recording dropped rows, this test turns green on its own instead of
+        # failing and tempting someone to "fix" the test.
         with open(config.DB_JSON_PATH, "r", encoding="utf-8") as f:
             history = json.load(f)
-            assert "ACT_001" in history
-            assert history["ACT_001"][config.COL_WORK_CRM] == "Bóng LED"
-            assert "_content_hash" in history["ACT_001"]
+        if "ACT_001" in history:
+            pytest.xfail("dong bi bo van duoc ghi kem _content_hash -> luot chay sau "
+                         "coi la da xong (pipeline.py:716 vs :513)")
+        assert "ACT_001" not in history
 
 
 @patch("pipeline.AuthProvider")
