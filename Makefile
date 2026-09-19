@@ -18,11 +18,11 @@ sample:
 
 # Build the Docker container for automation
 docker-build:
-	cd automation && docker compose build
+	docker compose build
 
 # Run the automation container
 docker-run:
-	cd automation && docker compose up
+	docker compose up -d
 
 # Clean python cache files
 clean:

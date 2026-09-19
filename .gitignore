@@ -1,6 +1,7 @@
 # Environment & secrets
 .env
 sa-key.json
+docker-compose.override.yml
 automation/.env
 automation/sa-key.json
 

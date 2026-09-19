@@ -260,12 +260,6 @@ class _FallbackClient:
         log_fallback("DOI DUONG: Gateway mat ket noi %d lan lien tiep -> Google AI Studio"
                         % self._threshold)
         log_fallback("cau loi cuoi cung tu Gateway: %s" % str(exc)[:300])
-        _notify("[CRM Pipeline] Gateway mat - da chuyen sang goi thang",
-                     "<p>Gateway khong ket noi duoc <b>%d lan lien tiep</b>.</p>"
-                     "<p>Agent da chuyen sang goi thang nha cung cap va <b>van chay tiep</b>.</p>"
-                     "<p>Duong du phong: Google AI Studio, dung FALLBACK_API_KEY. "
-                     "Cac luot nay khong duoc Gateway ghi SpendLogs.</p>"
-                     % self._threshold)
         return True
 
     def _back_to_gateway(self) -> None:
@@ -277,10 +271,6 @@ class _FallbackClient:
             self._consecutive_failures = 0
         log_fallback("VE DUONG CU: Gateway song lai sau %.0f giay, %d luot da di duong thang"
                         % (elapsed, self._fallback_calls))
-        _notify("[CRM Pipeline] Gateway song lai - da quay ve",
-                     "<p>Gateway ket noi lai duoc. Agent da quay ve goi qua Gateway.</p>"
-                     "<p>Su co keo dai <b>%.0f giay</b>, co <b>%d luot</b> da di duong thang.</p>"
-                     % (elapsed, self._fallback_calls))
 
 
 def log_fallback(cau: str) -> None:
@@ -288,16 +278,6 @@ def log_fallback(cau: str) -> None:
     cung khong ghi thi khoang thoi gian ay chi con biet qua hoa don -- cham mot ngay
     va khong co chieu nguoi dung."""
     logging.getLogger("crm-automation").warning("[FALLBACK] %s", cau)
-
-
-def _notify(tieu_de: str, than: str) -> None:
-    # Import tai cho: `notification` keo theo `msal`, va `llm.py` phai nap duoc ca
-    # khi chua cai goi do.
-    try:
-        from notification import send_alert
-        send_alert(tieu_de, than)
-    except Exception as e:
-        logging.getLogger("crm-automation").error("Khong gui duoc thu canh bao: %s", e)
 
 
 def _build_ai_studio_client():
