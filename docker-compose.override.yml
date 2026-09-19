@@ -31,8 +31,8 @@ services:
       # dung theo README o day thi ra "model not found".
       - GEMINI_MODEL=gemini-2.5-flash
       # GEMINI_API_KEY phai la VIRTUAL KEY cua Gateway (sk-...), KHONG phai khoa
-      # Google. Dat trong .env cua CRM. Do la toan bo diem cua viec di qua
-      # Gateway: agent khong con giu khoa nha cung cap nen KHONG THE di vong.
+      # Google. Dat trong .env cua CRM; key Google AI Studio cho duong du phong
+      # dat rieng trong FALLBACK_API_KEY (cung duoc nap tu .env).
 
 networks:
   default:

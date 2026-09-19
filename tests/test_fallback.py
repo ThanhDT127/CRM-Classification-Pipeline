@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -32,6 +33,29 @@ class _FakeModels:
 class _FakeClient:
     def __init__(self, fail_times=0, name="ok"):
         self.models = _FakeModels(fail_times, name)
+
+
+def test_fallback_uses_ai_studio_key_without_service_account():
+    env = {"GEMINI_BACKEND": "gateway", "FALLBACK_API_KEY": "studio-test-key",
+           "GOOGLE_GENAI_USE_VERTEXAI": "true"}
+    with patch.dict(llm.os.environ, env), \
+            patch.object(llm.config, "API_KEY", "sk-gateway-test"), \
+            patch.object(llm.config, "FALLBACK_ENABLED", True), \
+            patch.object(Path, "exists", return_value=False), \
+            patch.object(llm.genai, "Client", wraps=llm.genai.Client) as build:
+        client, _ = llm.init_llm_client()
+        assert isinstance(client, llm._FallbackClient), "AI Studio must not require sa-key.json"
+        direct = client._get_fallback_client()
+        try:
+            build.assert_called_once_with(vertexai=False, api_key="studio-test-key")
+            assert direct.vertexai is False
+        finally:
+            direct.close()
+
+        llm.os.environ["FALLBACK_API_KEY"] = ""
+        client, _ = llm.init_llm_client()
+        assert isinstance(client, llm._GatewayClient), "Missing Studio key must disable fallback"
+        assert build.call_count == 1, "Never use Gateway key as Google credentials"
 
 
 def test_three_error_strings_stay_distinct():

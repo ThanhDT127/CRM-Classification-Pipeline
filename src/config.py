@@ -61,9 +61,8 @@ SMTP_USE_TLS = (os.getenv("SMTP_USE_TLS") or "True").lower() in ("true", "1", "y
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or ""
 
 # --- Duong DU PHONG khi Gateway chet ---
-# TIEN CHAY VAO PROJECT NAO: `crm-test-508114` (lay tu sa-key.json), KHONG phai
-# `crm-500509` ma dim_agent dang ghi cho agent 7. Chot 12/09: giai doan phat trien
-# chap nhan lech; PHAI xem lai truoc khi len server.
+# Google AI Studio dung FALLBACK_API_KEY rieng, khong dung sa-key.json.
+# Cac luot goi truc tiep khong duoc Gateway ghi SpendLogs.
 FALLBACK_ENABLED = (os.getenv("FALLBACK_ENABLED") or "False").lower() in ("true", "1", "yes")
 FALLBACK_FAIL_THRESHOLD = int(os.getenv("FALLBACK_FAIL_THRESHOLD") or "3")
 FALLBACK_RETRY_AFTER_S = float(os.getenv("FALLBACK_RETRY_AFTER_S") or "60")

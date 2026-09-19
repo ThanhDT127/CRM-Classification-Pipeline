@@ -257,14 +257,15 @@ class _FallbackClient:
             self._on_fallback = True
             self._last_probe_at = time.time()
             self._outage_started_at = time.time()
-        log_fallback("DOI DUONG: Gateway mat ket noi %d lan lien tiep -> goi thang nha cung cap"
+        log_fallback("DOI DUONG: Gateway mat ket noi %d lan lien tiep -> Google AI Studio"
                         % self._threshold)
         log_fallback("cau loi cuoi cung tu Gateway: %s" % str(exc)[:300])
         _notify("[CRM Pipeline] Gateway mat - da chuyen sang goi thang",
                      "<p>Gateway khong ket noi duoc <b>%d lan lien tiep</b>.</p>"
                      "<p>Agent da chuyen sang goi thang nha cung cap va <b>van chay tiep</b>.</p>"
-                     "<p>Tien cua cac luot nay roi vao project <code>%s</code>.</p>"
-                     % (self._threshold, os.getenv("VERTEX_PROJECT") or "?"))
+                     "<p>Duong du phong: Google AI Studio, dung FALLBACK_API_KEY. "
+                     "Cac luot nay khong duoc Gateway ghi SpendLogs.</p>"
+                     % self._threshold)
         return True
 
     def _back_to_gateway(self) -> None:
@@ -299,22 +300,12 @@ def _notify(tieu_de: str, than: str) -> None:
         logging.getLogger("crm-automation").error("Khong gui duoc thu canh bao: %s", e)
 
 
-def _build_vertex_client():
-    """Duong du phong: nhanh Vertex san co, doc `sa-key.json`.
-
-    KHONG doc `GEMINI_API_KEY`: khi chay qua Gateway bien do giu khoa AO `sk-...`,
-    mang di goi thang Google se hong. Do la ly do duong nay dung nguon rieng.
-    """
-    sa_key_path = config.PROJECT_ROOT / "sa-key.json"
-    if not sa_key_path.exists():
-        raise RuntimeError("Duong du phong can sa-key.json, khong thay tai " + str(sa_key_path))
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(sa_key_path)
-    project_id = os.getenv("VERTEX_PROJECT")
-    if not project_id:
-        with open(sa_key_path, "r", encoding="utf-8") as f:
-            project_id = json.load(f).get("project_id")
-    client = genai.Client(vertexai=True, project=project_id,
-                          location=os.getenv("VERTEX_LOCATION", "us-central1"))
+def _build_ai_studio_client():
+    """Dung key Google rieng; GEMINI_API_KEY dang giu virtual key cua Gateway."""
+    api_key = (os.getenv("FALLBACK_API_KEY") or "").strip()
+    if not api_key:
+        raise ValueError("Duong du phong Google AI Studio can FALLBACK_API_KEY")
+    client = genai.Client(vertexai=False, api_key=api_key)
     client._api_client._httpx_client.timeout = httpx.Timeout(300.0)
     return client
 
@@ -325,8 +316,7 @@ def init_llm_client() -> tuple[genai.Client | _GatewayClient, str]:
     # doi mot dong nao va mac dinh van la chung.
     if (os.getenv("GEMINI_BACKEND") or "").strip().lower() == "gateway":
         # `GEMINI_API_KEY` o day la VIRTUAL KEY cua Gateway, khong phai khoa Google.
-        # Do la toan bo diem cua viec di qua Gateway: agent khong con giu khoa nha
-        # cung cap nen no KHONG THE di vong.
+        # Key Google cho duong du phong nam rieng trong FALLBACK_API_KEY.
         api_key = config.API_KEY or os.getenv("GEMINI_API_KEY") or ""
         if not api_key:
             raise ValueError(
@@ -338,18 +328,18 @@ def init_llm_client() -> tuple[genai.Client | _GatewayClient, str]:
         # batch 25 dong voi 8192 token ra khong nhanh; va da quan sat mot luot qua
         # Gateway mat 81 giay (chua tai hien duoc, chua ro nguyen nhan).
         gw = _GatewayClient(base_url, api_key, user, 300.0)
-        # Mac dinh TAT. Thieu sa-key.json thi tu tat va keu TO luc khoi dong -- nhung
+        # Mac dinh TAT. Thieu key AI Studio thi tu tat va keu TO luc khoi dong -- nhung
         # agent VAN khoi dong duoc, vi thieu duong du phong khong phai ly do chan he thong.
         if getattr(config, "FALLBACK_ENABLED", False):
-            if (config.PROJECT_ROOT / "sa-key.json").exists():
-                print(">>> Fallback bat: Gateway chet %d lan lien tiep thi goi thang (project %s)"
-                      % (config.FALLBACK_FAIL_THRESHOLD, os.getenv("VERTEX_PROJECT") or "?"))
-                gw = _FallbackClient(gw, _build_vertex_client,
+            if (os.getenv("FALLBACK_API_KEY") or "").strip():
+                print(">>> Fallback bat: Gateway chet %d lan lien tiep thi goi Google AI Studio"
+                      % config.FALLBACK_FAIL_THRESHOLD)
+                gw = _FallbackClient(gw, _build_ai_studio_client,
                                      config.FALLBACK_FAIL_THRESHOLD,
                                      config.FALLBACK_RETRY_AFTER_S)
             else:
                 logging.getLogger("crm-automation").error(
-                    "FALLBACK_ENABLED=True nhung khong co sa-key.json -> TAT fallback. "
+                    "FALLBACK_ENABLED=True nhung thieu FALLBACK_API_KEY -> TAT fallback. "
                     "Gateway chet se lam bo lo nhu truoc.")
         return gw, config.MODEL_NAME
     use_vertex = os.getenv("USE_VERTEX", "True").lower() in ("true", "1", "yes")
