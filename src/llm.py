@@ -237,7 +237,9 @@ class _FallbackClient:
             self._fallback_calls += 1
             nth = self._fallback_calls
         log_fallback("luot %d di duong thang (ly do: Gateway mat ket noi)" % nth)
-        return self._get_fallback_client().models.generate_content(**kwargs)
+        # Gateway aliases are not Google model IDs. Keep gateway calls and probes unchanged.
+        fallback_kwargs = dict(kwargs, model=config.FALLBACK_MODEL_NAME)
+        return self._get_fallback_client().models.generate_content(**fallback_kwargs)
 
     def _count_failure(self, exc: Exception = None) -> bool:
         """Tra True DUNG MOT LAN, cho luong lam bo dem cham threshold.

@@ -55,6 +55,7 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 # Google AI Studio dung FALLBACK_API_KEY rieng, khong dung sa-key.json.
 # Cac luot goi truc tiep khong duoc Gateway ghi SpendLogs.
 FALLBACK_ENABLED = (os.getenv("FALLBACK_ENABLED") or "False").lower() in ("true", "1", "yes")
+FALLBACK_MODEL_NAME = (os.getenv("FALLBACK_MODEL") or "").strip() or "gemini-3.5-flash-lite"
 FALLBACK_FAIL_THRESHOLD = int(os.getenv("FALLBACK_FAIL_THRESHOLD") or "3")
 FALLBACK_RETRY_AFTER_S = float(os.getenv("FALLBACK_RETRY_AFTER_S") or "60")
 

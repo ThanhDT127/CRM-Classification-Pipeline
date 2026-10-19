@@ -21,9 +21,11 @@ class _FakeModels:
         self.remaining_failures = fail_times
         self.name = name
         self.call_count = 0
+        self.calls = []
 
     def generate_content(self, **kwargs):
         self.call_count += 1
+        self.calls.append(dict(kwargs))
         if self.remaining_failures > 0:
             self.remaining_failures -= 1
             raise RuntimeError("Gateway khong ket noi duoc: ConnectError: test")
@@ -33,6 +35,40 @@ class _FakeModels:
 class _FakeClient:
     def __init__(self, fail_times=0, name="ok"):
         self.models = _FakeModels(fail_times, name)
+
+
+def test_fallback_model_is_separate_from_gateway_alias_and_recovery_probes():
+    gateway = _FakeClient(fail_times=2, name="gateway")
+    direct = _FakeClient(name="studio")
+    client = llm._FallbackClient(gateway, lambda: direct, threshold=1, retry_after_s=999)
+    request = {"model": "gemini-flash-lite", "contents": "test content", "config": object()}
+
+    assert client.models.generate_content(**request).text == "studio"
+    assert client.models.generate_content(**request).text == "studio"
+    client._last_probe_at = 0
+    assert client.models.generate_content(**request).text == "studio"
+    client._last_probe_at = 0
+    assert client.models.generate_content(**request).text == "gateway"
+
+    assert len(gateway.models.calls) == 3
+    assert all(call == request for call in gateway.models.calls)
+    assert len(direct.models.calls) == 3
+    expected_direct = dict(request, model="gemini-3.5-flash-lite")
+    assert all(call == expected_direct for call in direct.models.calls)
+    assert request["model"] == "gemini-flash-lite"
+    assert not client._on_fallback
+
+
+def test_fallback_uses_configured_model_without_changing_gateway_request():
+    gateway = _FakeClient(fail_times=1)
+    direct = _FakeClient(name="studio")
+    client = llm._FallbackClient(gateway, lambda: direct, threshold=1, retry_after_s=999)
+
+    with patch.object(llm.config, "FALLBACK_MODEL_NAME", "gemini-2.5-flash", create=True):
+        assert client.models.generate_content(model="gemini-flash-lite", contents="x").text == "studio"
+
+    assert gateway.models.calls[0]["model"] == "gemini-flash-lite"
+    assert direct.models.calls[0]["model"] == "gemini-2.5-flash"
 
 
 def test_fallback_uses_ai_studio_key_without_service_account():
