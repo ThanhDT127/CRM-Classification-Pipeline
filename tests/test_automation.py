@@ -71,6 +71,61 @@ def test_sharepoint_client_upload(mock_auth):
         assert res["id"] == "mock_file_id"
         client.session.put.assert_called_once()
 
+def test_sharepoint_client_download_retry_on_ssl_error(mock_auth):
+    import requests
+    client = SharePointClient(mock_auth)
+    client.session = MagicMock()
+    
+    mock_meta_resp = MagicMock()
+    mock_meta_resp.status_code = 200
+    mock_meta_resp.json.return_value = {"@microsoft.graph.downloadUrl": "https://mock.download.url/file.xlsx"}
+    
+    mock_dl_resp = MagicMock()
+    mock_dl_resp.status_code = 200
+    mock_dl_resp.iter_content.return_value = [b"recovered content after retry"]
+    
+    # Attempt 1: meta succeeds, download fails with SSLError
+    # Attempt 2: meta succeeds, download succeeds
+    client.session.get.side_effect = [
+        mock_meta_resp,
+        requests.exceptions.SSLError("UNEXPECTED_EOF_WHILE_READING"),
+        mock_meta_resp,
+        mock_dl_resp
+    ]
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        local_path = Path(tmpdir) / "CRM_merge.xlsx"
+        with patch("time.sleep") as mock_sleep:
+            result_path = client.download_file("CRM_merge/CRM_merge.xlsx", local_path, max_retries=3, backoff_factor=1.0)
+            assert result_path == local_path
+            assert local_path.read_bytes() == b"recovered content after retry"
+            mock_sleep.assert_called_once()
+
+def test_sharepoint_client_download_max_retries_exceeded(mock_auth):
+    import requests
+    client = SharePointClient(mock_auth)
+    client.session = MagicMock()
+    
+    mock_meta_resp = MagicMock()
+    mock_meta_resp.status_code = 200
+    mock_meta_resp.json.return_value = {"@microsoft.graph.downloadUrl": "https://mock.download.url/file.xlsx"}
+    
+    # Consistently fails on streaming download
+    client.session.get.side_effect = [
+        mock_meta_resp,
+        requests.exceptions.SSLError("UNEXPECTED_EOF_WHILE_READING"),
+        mock_meta_resp,
+        requests.exceptions.SSLError("UNEXPECTED_EOF_WHILE_READING"),
+    ]
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        local_path = Path(tmpdir) / "CRM_merge.xlsx"
+        with patch("time.sleep"):
+            with pytest.raises(requests.exceptions.SSLError):
+                client.download_file("CRM_merge/CRM_merge.xlsx", local_path, max_retries=2, backoff_factor=1.0)
+        assert not local_path.exists()
+        assert not local_path.with_suffix(".xlsx.tmp").exists()
+
 def test_notification_service_send_email(mock_auth):
     # Temporarily set config values
     config.NOTIFICATION_SENDER_EMAIL = "sender@domain.com"
