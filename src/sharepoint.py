@@ -179,7 +179,20 @@ class SharePointClient:
         logger.info("File size > 4MB. Creating chunked upload session...")
         create_session_url = self._url(f"root:/{escaped_path}:/createUploadSession", drive_id=drive_id)
         
-        session_response = self.session.post(create_session_url, headers=self.auth.get_headers(), json={}, timeout=30)
+        # createUploadSession tra 409/423 khi item dang bi lock/checkout
+        # -> mot lan loi la ca run mat buoc upload (su co 2026-10-19).
+        for attempt in range(1, 4):
+            session_response = self.session.post(
+                create_session_url, headers=self.auth.get_headers(), json={}, timeout=30
+            )
+            if session_response.status_code not in (409, 423):
+                break
+            if attempt < 3:
+                logger.warning(
+                    "[SharePointClient] createUploadSession %d, thu lai %d/3 sau %ds",
+                    session_response.status_code, attempt, 15 * attempt,
+                )
+                time.sleep(15 * attempt)
         session_response.raise_for_status()
         
         upload_url = session_response.json().get("uploadUrl")

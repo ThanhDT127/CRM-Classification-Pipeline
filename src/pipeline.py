@@ -7,6 +7,12 @@ import hashlib
 from copy import copy
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+import socket
+import threading
+
+# Hang 2026-10-25: 2 thread ket vinh vien trong recv() toi Google -> ca run treo 2 ngay.
+# Tran cho moi socket khong tu dat timeout (httpx/genai/requests van dat rieng).
+socket.setdefaulttimeout(float(os.getenv("PIPELINE_SOCKET_TIMEOUT_S") or 180))
 import datetime
 import traceback
 import logging
@@ -901,16 +907,48 @@ def get_seconds_until_next_run(target_hour=3, target_minute=30) -> float:
         
     return diff.total_seconds()
 
+def run_with_watchdog() -> bool:
+    """Chay pipeline trong thread co gioi han thoi gian.
+
+    Treo qua PIPELINE_MAX_RUNTIME_S thi os._exit(1) de Docker
+    (restart: unless-stopped) dung container lai, thay vi dung im vo han.
+    """
+    limit = int(os.getenv("PIPELINE_MAX_RUNTIME_S") or 3600)
+    result = {}
+
+    def _target():
+        try:
+            result["ok"] = run_automation_pipeline()
+        except BaseException:
+            logger.exception("Pipeline nem exception ra ngoai")
+            result["ok"] = False
+
+    worker = threading.Thread(target=_target, name="pipeline-run", daemon=True)
+    worker.start()
+    worker.join(limit)
+    if not worker.is_alive():
+        return bool(result.get("ok"))
+
+    logger.critical("Pipeline treo qua %ss -> kill process de container restart.", limit)
+    try:
+        NotificationService(AuthProvider()).send_error(
+            f"CRM pipeline treo qua {limit}s, container se tu restart. Xem automation.log."
+        )
+    except Exception:
+        logger.exception("Khong gui duoc email canh bao")
+    logging.shutdown()
+    os._exit(1)
+
+
 if __name__ == "__main__":
     run_as_daemon = os.getenv("RUN_AS_DAEMON", "false").lower() == "true"
     
     if not run_as_daemon:
-        success = run_automation_pipeline()
-        sys.exit(0 if success else 1)
+        sys.exit(0 if run_with_watchdog() else 1)
     else:
         logger.info("Starting pipeline in Daemon Mode (RUN_AS_DAEMON=True)...")
         # Run immediately on startup
-        run_automation_pipeline()
+        run_with_watchdog()
         
         while True:
             sec = get_seconds_until_next_run(3, 30)
@@ -919,4 +957,4 @@ if __name__ == "__main__":
             time.sleep(sec)
             
             logger.info("Daemon Mode: Waking up to run scheduled pipeline...")
-            run_automation_pipeline()
+            run_with_watchdog()
